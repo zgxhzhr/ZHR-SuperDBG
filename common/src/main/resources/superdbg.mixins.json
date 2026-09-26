@@ -1,0 +1,58 @@
+{
+    "required": true,
+    "minVersion": "0.8",
+    "package": "io.github.zgxhzhr.superdbg.mixin",
+    "refmap": "${mod_id}.refmap.json",
+    "compatibilityLevel": "JAVA_17",
+    "mixins": [
+        "AttributeInstanceMixin",
+        "AttributeMapAccessor",
+        "ClassInstanceMultiMapMixin",
+        "ClientboundUpdateMobEffectPacketMixin",
+        "DataItemMixin",
+        "EnchantmentHelperMixin",
+        "EntityLookupAccessor",
+        "EntityLookupMixin",
+        "EntityTickListAccessor",
+        "EntityTickListMixin",
+        "LivingEntityMixin",
+        "LivingEntityLootMixin",
+        "MthCeilMixin",
+        "MobEffectInstanceMixin",
+        "MobEffectMixin",
+        "PersistentEntitySectionManagerAccessor",
+        "PersistentEntitySectionManagerMixin",
+        "PotionItemMixin",
+        "RangedAttributeMaxMixin",
+        "RemovalGuardMixin",
+        "ServerLevelAccessor",
+        "ServerLevelMixin",
+        "ThrownPotionMixin",
+        "PlayerTickOverrideMixin",
+        "RangedAttributeAccessor",
+        "MobTraitCapAccessor",
+        "MobTraitCapInitMixin",
+        "MobTraitCapTickMixin",
+        "ThirdPartyRemoverMixin",
+        "ThirdPartyDespawnImmunityMixin",
+        "ItemStackCountMixin",
+        "ItemStackNetworkMixin",
+        "EntitySetPosGuardMixin",
+        "CallbackOnMoveGuardMixin",
+        "BlockPosGuardMixin",
+        "ChunkMapTrackLogMixin",
+        "TrackedEntityTrackLogMixin",
+        "TmaRandomGiftMixin"
+    ],
+    "client": [
+        "ClientPacketListenerMixin",
+        "JadeStatusEffectsProviderMixin",
+        "LocalPlayerTickMixin",
+        "ClientDuplicateEntityMixin"
+    ],
+    "server": [
+    ],
+    "injectors": {
+        "defaultRequire": 0
+    }
+}

@@ -1,0 +1,32 @@
+modLoader = "javafml" #mandatory
+loaderVersion = "${forge_loader_version_range}" #mandatory
+license = "${license}"
+[[mods]] #mandatory
+modId = "${mod_id}" #mandatory
+version = "${version}" #mandatory
+displayName = "${mod_name}" #mandatory
+authors = "${mod_author}" #optional
+description = '''${description}''' #mandatory
+[[dependencies.${mod_id}]]
+modId = "forge"
+mandatory = true
+versionRange = "[${forge_version},)"
+ordering = "NONE"
+side = "BOTH"
+[[dependencies.${mod_id}]]
+modId = "minecraft"
+mandatory = true
+versionRange = "${minecraft_version_range}"
+ordering = "NONE"
+side = "BOTH"
+
+# 可选：L2Hostility（词条系统）。安装后实体编辑器出现词条页；
+# 不安装时由 ModList 守卫自动跳过全部词条功能。
+# versionRange="*" 允许任意版本：Forge 对非标准版本号解析有 bug，
+# 显式写死范围反而会误判不兼容而崩溃。
+[[dependencies.${mod_id}]]
+modId = "l2hostility"
+mandatory = false
+versionRange = "*"
+ordering = "AFTER"
+side = "BOTH"

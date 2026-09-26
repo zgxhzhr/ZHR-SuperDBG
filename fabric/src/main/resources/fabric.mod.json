@@ -1,0 +1,35 @@
+{
+    "schemaVersion": 1,
+    "id": "superdbg",
+    "version": "${version}",
+    "name": "${mod_name}",
+    "description": "${description}",
+    "authors": [
+        "${mod_author}"
+    ],
+    "contact": {
+        "homepage": "https://github.com/zgxhzhr",
+        "sources": "https://github.com/zgxhzhr"
+    },
+    "license": "${license}",
+    "icon": "assets/superdbg/icon.png",
+    "environment": "*",
+    "entrypoints": {
+        "main": [
+            "io.github.zgxhzhr.superdbg.SuperDebuggerMod"
+        ]
+    },
+    "mixins": [
+        "${mod_id}.mixins.json",
+        "${mod_id}.fabric.mixins.json"
+    ],
+    "depends": {
+        "fabricloader": ">=0.14",
+        "fabric": "*",
+        "minecraft": "${minecraft_version}",
+        "java": ">=17"
+    },
+    "suggests": {
+        "another-mod": "*"
+    }
+}

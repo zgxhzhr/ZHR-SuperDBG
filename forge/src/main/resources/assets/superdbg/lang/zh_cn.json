@@ -1,0 +1,17 @@
+{
+  "superdbg.gui.amplifier": "等级",
+  "superdbg.gui.level": "级",
+  "superdbg.gui.duration": "时长",
+  "superdbg.gui.time": "时",
+  "superdbg.gui.permanent": "永久",
+  "superdbg.gui.confirm": "确认",
+
+  "attribute.touhou_little_maid.maid_use_item_speed": "女仆物品使用速度",
+  "attribute.touhou_little_maid.maid_crossbow_attack_speed": "女仆弩射击速度",
+  "attribute.touhou_little_maid.maid_gun_attack_speed": "女仆枪械射击速度",
+  "attribute.touhou_little_maid.maid_shoot_cooldown": "女仆射击冷却",
+  "attribute.touhou_little_maid.maid_trident_cooldown": "女仆三叉戟冷却",
+  "attribute.touhou_little_maid.maid_pickup_range": "女仆拾取范围",
+  "attribute.touhou_little_maid.maid_passive_use_shield_tick": "女仆举盾时长",
+  "attribute.touhou_little_maid.maid_hunger": "女仆饱食度"
+}

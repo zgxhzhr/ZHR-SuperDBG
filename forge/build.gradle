@@ -1,0 +1,100 @@
+plugins {
+    id 'multiloader-loader'
+    id 'net.neoforged.moddev.legacyforge'
+}
+
+mixin {
+    add(sourceSets.main, "${mod_id}.refmap.json")
+
+    config("${mod_id}.mixins.json")
+}
+
+legacyForge {
+    version = "${minecraft_version}-${forge_version}"
+
+    validateAccessTransformers = true
+
+    def at = project(':common').file('src/main/resources/META-INF/accesstransformer.cfg')
+    if (at.exists()) {
+        accessTransformers = ["src/main/resources/META-INF/accesstransformer.cfg"]
+    }
+    parchment {
+        minecraftVersion = parchment_minecraft
+        mappingsVersion = parchment_version
+    }
+    runs {
+        client {
+            client()
+        }
+        data {
+            data()
+            programArguments.addAll '--mod', project.mod_id, '--all', '--output', file('src/generated/resources/').getAbsolutePath(), '--existing', file('src/main/resources/').getAbsolutePath()
+        }
+        server {
+            server()
+        }
+        gameTestServer {
+            server()
+            systemProperty 'forge.gameTestServer', 'true'
+        }
+    }
+
+    mods {
+        "${mod_id}" {
+            sourceSet sourceSets.main
+            sourceSet sourceSets.test
+        }
+    }
+}
+
+sourceSets {
+    test {
+        java.srcDirs = ['src/test/java']
+        resources.srcDirs = ['src/test/resources']
+    }
+}
+
+// 让 test 源集继承 main 的完整编译/运行时 classpath（含 Minecraft 与 Forge）
+afterEvaluate {
+    def mainOut = sourceSets.main.output
+    def mainCp = sourceSets.main.compileClasspath
+    def mainRt = sourceSets.main.runtimeClasspath
+    sourceSets.test.compileClasspath = mainOut + mainCp + sourceSets.test.compileClasspath
+    sourceSets.test.runtimeClasspath = mainOut + mainRt + sourceSets.test.runtimeClasspath
+    tasks.named('compileTestJava').configure {
+        classpath = sourceSets.test.compileClasspath
+    }
+}
+
+sourceSets.main.resources.srcDir 'src/generated/resources'
+
+// 将 GameTest 结构文件复制到运行目录（StructureUtils 从工作目录下的 gameteststructures/ 读取 SNBT）
+tasks.register('copyGameTestStructures', Copy) {
+    from 'src/test/resources/gameteststructures'
+    into layout.projectDirectory.dir('run/gameteststructures')
+}
+tasks.named('runGameTestServer').configure {
+    dependsOn 'copyGameTestStructures'
+}
+
+dependencies {
+    compileOnly project(":common")
+    annotationProcessor("org.spongepowered:mixin:0.8.5-SNAPSHOT:processor")
+
+    // 可选依赖（仅编译期符号，不打包进本模组），统一放在 libs-compileonly 目录：
+    // - Jade（信息显示）：药水效果等级显示
+    // - L2Hostility（恶意/词条系统）及前置 l2library/l2serial/l2complements/l2damagetracker/curios：
+    //   实体编辑器词条页
+    // 运行时由玩家环境提供；未安装时由各自的兼容层守卫与 required:false Mixin 自动跳过。
+    // jar 为生产环境同款，moddev 会将其重映射到当前开发映射。
+    // 文件名不写死版本号：拾取目录下全部 jar，更新时只需替换文件。
+    // 用 files() 包裹 fileTree 解析结果，确保 moddev 将其识别为模组依赖并重映射。
+    compileOnly files(fileTree(dir: 'libs-compileonly', include: ['*.jar']).files)
+}
+
+jar {
+    finalizedBy('reobfJar')
+    manifest.attributes([
+            "MixinConfigs": "${mod_id}.mixins.json"
+    ])
+}

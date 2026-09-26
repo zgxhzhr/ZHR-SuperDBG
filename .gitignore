@@ -1,0 +1,38 @@
+# Gradle
+.gradle/
+build/
+
+# 构建产物与第三方依赖 jar（不入库，克隆后自行放置 libs-compileonly）
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# 游戏运行目录
+run/
+runs/
+
+# IDE - IntelliJ IDEA
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
+
+# IDE - Eclipse
+.settings/
+.classpath
+.project
+bin/
+
+# IDE - VS Code
+.vscode/
+
+# 操作系统
+Thumbs.db
+.DS_Store
+
+# 日志/缓存
+*.log
+logs/
+
+# 本地调试工具产物
+.dbg/
