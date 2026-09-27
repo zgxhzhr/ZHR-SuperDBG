@@ -11,7 +11,7 @@ import net.minecraftforge.network.simple.SimpleChannel;
 public final class NetworkHandler {
 
     /** 协议版本，服务端与客户端不一致时拒绝连接。 */
-    private static final String PROTOCOL_VERSION = "14";
+    private static final String PROTOCOL_VERSION = "15";
 
     public static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
             new ResourceLocation(Constants.MOD_ID, "main"),
