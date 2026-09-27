@@ -100,9 +100,9 @@ public abstract class ClientDuplicateEntityMixin<T extends EntityAccess> {
         } catch (Throwable ignored) {
         }
         if (uuidLeft) {
-            Constants.LOG.warn("[SuperDbg] 客户端同UUID清理后byUuid仍残留（新实体可能仍被拒）: {}", old);
+            Constants.LOG.warn("[防移除守卫·客户端异常] 同UUID清理后 byUuid 仍残留（新实体可能仍被拒）: {}", old);
         } else {
-            Constants.LOG.warn("[SuperDbg] 客户端收到同UUID新实体，已清旧幽灵: old={} new={}",
+            Constants.LOG.info("[防移除守卫·客户端同步] 收到同 UUID 新实体：旧渲染幽灵已清理，新实例正常接管显示: old={} new={}",
                     old, entity);
         }
     }

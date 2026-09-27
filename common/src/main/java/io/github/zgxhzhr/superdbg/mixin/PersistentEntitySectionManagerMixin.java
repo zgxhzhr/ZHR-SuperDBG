@@ -283,12 +283,13 @@ public abstract class PersistentEntitySectionManagerMixin<T extends EntityAccess
                     knownUuids.remove(uuid);
                 }
             });
-            io.github.zgxhzhr.superdbg.Constants.LOG.warn(
-                    "[SuperDbg] 入册冲突放行：清理已离场旧实例残留 uuid={} holder={} incoming={}",
+            io.github.zgxhzhr.superdbg.Constants.LOG.info(
+                    "[防移除守卫·正常放行] 同 UUID 新实例入册：旧实例已离场，已清理其索引残留，新实例正常接管"
+                            + "（守卫标记随 persistentData 自动继承）: uuid={} holder={} incoming={}",
                     uuid, holderObj, incoming);
         } catch (Exception e) {
             io.github.zgxhzhr.superdbg.Constants.LOG.warn(
-                    "[SuperDbg] 入册冲突放行清理失败 uuid={}", uuid, e);
+                    "[防移除守卫·放行清理失败] uuid={}", uuid, e);
         }
     }
 

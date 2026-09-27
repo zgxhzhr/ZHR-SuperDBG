@@ -300,7 +300,9 @@ public final class EntityEditorService {
      * 送到未加载区块会导致 section=null，实体残留于 multimap 无法摘除。
      */
     private static void forceRemoveEntity(LivingEntity target) {
-        io.github.zgxhzhr.superdbg.Constants.LOG.warn("[SuperDbg] forceRemoveEntity 开始: {} uuid={} class={}", target, target.getUUID(), target.getClass().getName());
+        io.github.zgxhzhr.superdbg.Constants.LOG.info(
+                "[管理员主动操作·强制移除] 开始（编辑器唯一合法删除途径，守卫按流程放行，并非对抗失败）: {} uuid={} class={}",
+                target, target.getUUID(), target.getClass().getName());
 
         // 1. 解除常见第三方 Boss 的死亡免疫/反作弊标志（字段级，不存在则跳过，不触发回调）
         setFieldIfExists(target, "apocalypseDeath", true);
@@ -326,7 +328,8 @@ public final class EntityEditorService {
         //    之后每 tick 管理器 tick HEAD 会持续补刀直到实体消失
         RemovalGuard.damageToKill(target);
 
-        io.github.zgxhzhr.superdbg.Constants.LOG.warn("[SuperDbg] forceRemoveEntity 已标记，下一 tick 由管理器原位完整删除: pos=({},{},{}) isRemoved()={}",
+        io.github.zgxhzhr.superdbg.Constants.LOG.info(
+                "[管理员主动操作·强制移除] 已标记：下一 tick 由区块管理器原位彻底删除（本次删除是主动操作，完成后守卫随之解除）: pos=({},{},{}) isRemoved()={}",
                 target.getX(), target.getY(), target.getZ(), target.isRemoved());
     }
 

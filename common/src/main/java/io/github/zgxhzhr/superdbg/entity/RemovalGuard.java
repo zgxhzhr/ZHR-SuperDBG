@@ -883,7 +883,9 @@ public final class RemovalGuard {
                 if (!level.isPositionEntityTicking(liveBlockPos(e))) {
                     continue;
                 }
-                io.github.zgxhzhr.superdbg.Constants.LOG.warn("[SuperDbg] 检测到守卫实体从世界消失，尝试原位重建: {} removed={}", e, e.isRemoved());
+                io.github.zgxhzhr.superdbg.Constants.LOG.info(
+                        "[防移除守卫·正常兜底] 检测到守卫实体被移出世界索引（多为第三方流程/管理器操作），"
+                                + "原位重建接管中——这是守卫在正常工作，实体不会消失: {} removed={}", e, e.isRemoved());
                 restoreFromSnapshot(e);
             }
         }
@@ -990,15 +992,17 @@ public final class RemovalGuard {
                     // 重新套守卫（NBT 中 persistentData 已带标记，但显式还原 SyncedEntityData）
                     set(lv, true);
                 }
-                io.github.zgxhzhr.superdbg.Constants.LOG.warn("[SuperDbg] 守卫实体被清除，已原位重建: old={}, new={}",
+                io.github.zgxhzhr.superdbg.Constants.LOG.info(
+                        "[防移除守卫·重建完成] 旧实例已清退，新实例已原位重建并重新挂载守卫——防移除继续生效，实体成功保住: old={}, new={}",
                         old, revived);
             } else {
-                io.github.zgxhzhr.superdbg.Constants.LOG.warn("[SuperDbg] 守卫实体重建失败：addFreshEntity 被拒绝（UUID 冲突？）: old={}, new={}",
+                io.github.zgxhzhr.superdbg.Constants.LOG.warn(
+                        "[防移除守卫·重建失败] addFreshEntity 被拒绝（UUID 冲突？）: old={}, new={}",
                         old, revived);
             }
             removeFromGuards(old);
         } catch (Exception e) {
-            io.github.zgxhzhr.superdbg.Constants.LOG.warn("[SuperDbg] 守卫实体重建失败: {}", old, e);
+            io.github.zgxhzhr.superdbg.Constants.LOG.warn("[防移除守卫·重建失败] 异常，实体未能恢复: {}", old, e);
         }
     }
 
