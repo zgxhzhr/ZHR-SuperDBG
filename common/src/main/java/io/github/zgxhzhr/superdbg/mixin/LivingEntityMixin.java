@@ -92,7 +92,17 @@ public abstract class LivingEntityMixin {
             // 重进时实体脚的 Y 坐标常与方块边界对齐（NBT 存的是整数方块坐标），
             // 加载后会卡进脚下方块一格。上抬一格让重力自然落位到方块顶部。
             // 仅在"从存档恢复"路径执行，不影响编辑器手动开防移除的场景。
-            self.teleportTo(self.getX(), self.getY() + 1.0, self.getZ());
+            if (self instanceof net.minecraft.server.level.ServerPlayer) {
+                // ServerPlayer.teleportTo 内部走 this.connection.teleport(...)，
+                // 登录加载 NBT 阶段 connection 尚未建立（null）→ NPE →
+                // "Couldn't place player in world" 连接丢失。
+                // 玩家改用纯位置写入（与原版 Entity.load 读 Pos 同机制，不发数据包），
+                // 登录流程随后会用当前位置向客户端同步出生坐标。
+                self.moveTo(self.getX(), self.getY() + 1.0, self.getZ(),
+                        self.getYRot(), self.getXRot());
+            } else {
+                self.teleportTo(self.getX(), self.getY() + 1.0, self.getZ());
+            }
         }
     }
 
