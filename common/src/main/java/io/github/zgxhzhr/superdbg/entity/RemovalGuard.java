@@ -750,7 +750,19 @@ public final class RemovalGuard {
             io.github.zgxhzhr.superdbg.Constants.LOG.debug("[SuperDbg] 守卫监控运行中: 名册={}", SNAPSHOTS.size());
         }
         for (LivingEntity living : SNAPSHOTS.values().toArray(new LivingEntity[0])) {
-            if (!has(living) || lastIgnored) {
+            if (lastIgnored) {
+                continue;
+            }
+            if (!has(living)) {
+                // 守卫标记消失：persistentData/SyncedEntityData 被外部反射清除——
+                // 篡改标记使 has()=false 后，setRemoved 拦截与本循环全部兜底都会放行，
+                // 实体将被无痕删除。名册成员身份（SNAPSHOTS 强引用）才是守卫的根，
+                // 标记只是投影：在此原位重新挂载并审计，删除动作无从得手。
+                if (isDismissed(living) || isLegitRemoval(living) || isForceRemoved(living)) {
+                    continue; // 合法离场流程中标记消退属预期，不做自愈
+                }
+                set(living, true);
+                logIntercepted(living, "清除守卫标记（persistentData/SyncedEntityData）", null);
                 continue;
             }
             // 每个实体只在自己所在的维度处理（每个维度都会调本方法，避免重复检测/重复重建）
