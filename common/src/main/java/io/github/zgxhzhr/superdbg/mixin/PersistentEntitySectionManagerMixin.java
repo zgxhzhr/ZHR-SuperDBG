@@ -414,11 +414,8 @@ public abstract class PersistentEntitySectionManagerMixin<T extends EntityAccess
         if (entity instanceof Entity e && !(entity instanceof Player)
                 && RemovalGuard.isRecentlyDeleted(e.getUUID())) {
             cir.setReturnValue(false);
-            UUID uuid = e.getUUID();
-            if (REVIVE_LOGGED.size() < 1024 && REVIVE_LOGGED.add(uuid)) {
-                io.github.zgxhzhr.superdbg.Constants.LOG.warn(
-                        "[SuperDbg] 拦截实体复活入册（第三方复活机制或其它路径）: {} uuid={}",
-                        e, uuid);
+            if (REVIVE_LOGGED.size() < 1024 && REVIVE_LOGGED.add(e.getUUID())) {
+                RemovalGuard.logIntercepted(e, "复活入册（第三方复活机制或其它路径）", null);
             }
         }
     }
@@ -459,9 +456,7 @@ public abstract class PersistentEntitySectionManagerMixin<T extends EntityAccess
         String illegal = RemovalGuard.findIllegalCaller();
         if (illegal != null) {
             ci.cancel();
-            io.github.zgxhzhr.superdbg.Constants.LOG.warn(
-                    "[SuperDbg] 拦截 {}: uuid={} 非白名单调用方={}",
-                    op, entity.getUUID(), illegal);
+            RemovalGuard.logIntercepted(living, op + "（从区块管理器摘除）", illegal);
         }
     }
 }

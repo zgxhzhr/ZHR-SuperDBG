@@ -120,8 +120,7 @@ public abstract class LivingEntityMixin {
         }
         if (RemovalGuard.has(self) && !RemovalGuard.isBypassing()) {
             ci.cancel();
-            io.github.zgxhzhr.superdbg.Constants.LOG.warn("[SuperDbg] 拦截 kill(): entity={}, caller={}",
-                    self, RemovalGuard.findIllegalCaller());
+            RemovalGuard.logIntercepted(self, "击杀（kill()）", RemovalGuard.findIllegalCaller());
         }
     }
 
@@ -144,8 +143,7 @@ public abstract class LivingEntityMixin {
         if (source.is(net.minecraft.world.damagesource.DamageTypes.GENERIC_KILL)
                 || source.is(net.minecraft.world.damagesource.DamageTypes.FELL_OUT_OF_WORLD)) {
             cir.setReturnValue(false);
-            io.github.zgxhzhr.superdbg.Constants.LOG.warn("[SuperDbg] 免疫 genericKill/虚空伤害: entity={}, caller={}",
-                    self, RemovalGuard.findIllegalCaller());
+            RemovalGuard.logIntercepted(self, "用 genericKill/虚空伤害清除", RemovalGuard.findIllegalCaller());
             return;
         }
         float hp = self.getHealth();
@@ -154,8 +152,7 @@ public abstract class LivingEntityMixin {
             if (amount > maxHp * 2.0F) {
                 // 秒杀级伤害（清除工具恒定 21 亿，恒大于上限 2 倍）：完全免疫，打不动
                 cir.setReturnValue(false);
-                io.github.zgxhzhr.superdbg.Constants.LOG.warn("[SuperDbg] 免疫秒杀伤害: entity={}, amount={}, caller={}",
-                        self, amount, RemovalGuard.findIllegalCaller());
+                RemovalGuard.logIntercepted(self, "秒杀级伤害攻击（伤害值=" + amount + "）", RemovalGuard.findIllegalCaller());
             } else {
                 // 一般高伤害（不超过上限 2 倍，如玩家暴击）：限幅为最大生命 15%，可被磨死
                 float actual = maxHp * 0.15F;
@@ -183,8 +180,8 @@ public abstract class LivingEntityMixin {
         }
         if (self.getHealth() > 0.0F) {
             ci.cancel(); // 异常伪死亡，取消
-            io.github.zgxhzhr.superdbg.Constants.LOG.warn("[SuperDbg] 拦截 die()（血量未归零被强行召死）: entity={}, hp={}, caller={}",
-                    self, self.getHealth(), RemovalGuard.findIllegalCaller());
+            RemovalGuard.logIntercepted(self,
+                    "强行召死 die()（血量未归零 hp=" + self.getHealth() + "）", RemovalGuard.findIllegalCaller());
             return;
         }
         // 血量为 0 也可能是清除工具先 setHealth(0) 再 die() 伪装的"正常死亡"：
@@ -192,8 +189,8 @@ public abstract class LivingEntityMixin {
         String caller = RemovalGuard.findIllegalCaller();
         if (caller != null) {
             ci.cancel();
-            io.github.zgxhzhr.superdbg.Constants.LOG.warn("[SuperDbg] 拦截外部模组调 die(): entity={}, hp={}, caller={}",
-                    self, self.getHealth(), caller);
+            RemovalGuard.logIntercepted(self,
+                    "调 die() 伪装死亡（hp=" + self.getHealth() + "）", caller);
         }
     }
 
@@ -220,8 +217,8 @@ public abstract class LivingEntityMixin {
         String caller = RemovalGuard.findIllegalCaller();
         if (caller != null) {
             ci.cancel();
-            io.github.zgxhzhr.superdbg.Constants.LOG.warn("[SuperDbg] 拦截外部模组写血: entity={}, {} -> {}, caller={}",
-                    self, self.getHealth(), health, caller);
+            RemovalGuard.logIntercepted(self,
+                    "压低血量（" + self.getHealth() + " → " + health + "）", caller);
         }
     }
 

@@ -522,7 +522,55 @@ public final class RemovalGuard {
         if (Math.abs(x) <= 3.0E7 && Math.abs(z) <= 3.0E7 && y >= -256.0 && y <= 4096.0) {
             return false;
         }
-        return findIllegalCaller() != null;
+        String illegal = findIllegalCaller();
+        if (illegal == null) {
+            return false;
+        }
+        logIntercepted(entity, String.format("将坐标改写至世界边界外（%.0f, %.0f, %.0f）", x, y, z), illegal);
+        return true;
+    }
+
+    // ---- 第三方操作拦截审计（统一出口） ----
+
+    /** 审计冷却：同（目标，动作，来源）60 秒内只打一条，避免每 tick 重试刷屏 */
+    private static final long INTERCEPT_COOLDOWN_MS = 60_000L;
+
+    private record InterceptKey(java.util.UUID target, String op, String caller) {}
+
+    /** key → [上次打印时间戳, 冷却期内静默计数] */
+    private static final java.util.concurrent.ConcurrentHashMap<InterceptKey, long[]> INTERCEPT_STATE =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * 第三方对守卫实体的操作被拦截时的统一审计日志。
+     * 格式：「{来源类} 试图对 {实体} 执行 {操作}，已拦截」，
+     * 冷却期内重复拦截静默计数，随冷却后的下一条带出。
+     * 防守成功属于正常流程 → INFO；只有守卫失效/失败才用 WARN。
+     */
+    public static void logIntercepted(Entity target, String op, String caller) {
+        if (target == null || op == null) {
+            return;
+        }
+        String who = caller == null || caller.isBlank() ? "未知来源" : caller;
+        InterceptKey key = new InterceptKey(target.getUUID(), op, who);
+        long[] st = INTERCEPT_STATE.computeIfAbsent(key, k -> new long[]{0L, 0L});
+        long now = System.currentTimeMillis();
+        String suffix;
+        synchronized (st) {
+            if (now - st[0] < INTERCEPT_COOLDOWN_MS) {
+                st[1]++;
+                return;
+            }
+            suffix = st[1] > 0 ? "（冷却期内已静默 " + st[1] + " 次重复拦截）" : "";
+            st[0] = now;
+            st[1] = 0L;
+        }
+        io.github.zgxhzhr.superdbg.Constants.LOG.info(
+                "[防移除守卫·已拦截] {} 试图对 {} 执行 {}，已拦截——实体未受影响，守卫继续生效{}",
+                who, target.getName().getString() + "(" + target.getType().toShortString() + ")", op, suffix);
+        if (INTERCEPT_STATE.size() > 512) {
+            INTERCEPT_STATE.entrySet().removeIf(e -> now - e.getValue()[0] > 10 * INTERCEPT_COOLDOWN_MS);
+        }
     }
 
     /** 由实体 ID 派生的稳定假 UUID：守卫期间对外（世界/其它模组）的身份标识，

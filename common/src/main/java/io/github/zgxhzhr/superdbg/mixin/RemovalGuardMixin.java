@@ -62,8 +62,7 @@ public abstract class RemovalGuardMixin {
         if (RemovalGuard.isAbnormalRemoval(living, reason)) {
             ci.cancel();
             String caller = RemovalGuard.findIllegalCaller();
-            io.github.zgxhzhr.superdbg.Constants.LOG.warn("[SuperDbg] 拦截异常移除(removal): entity={}, reason={}, caller={}",
-                    living, reason, caller);
+            RemovalGuard.logIntercepted(living, "将实体移除出世界（setRemoved, reason=" + reason + "）", caller);
             if (caller != null && caller.startsWith("com.github.tartaricacid")) {
                 sendCaptureBlockedMessage(living);
             }
@@ -94,7 +93,7 @@ public abstract class RemovalGuardMixin {
         if (RemovalGuard.isAbnormalRemoval(living, Entity.RemovalReason.DISCARDED)) {
             ci.cancel();
             String caller = RemovalGuard.findIllegalCaller();
-            io.github.zgxhzhr.superdbg.Constants.LOG.warn("[SuperDbg] 拦截异常移除(discard): entity={}, caller={}", living, caller);
+            RemovalGuard.logIntercepted(living, "丢弃实体（discard()）", caller);
             // 给附近玩家发提示（TLM 收容类 caller → 提示关闭防移除，其它异常移除只 log）
             if (caller != null && caller.startsWith("com.github.tartaricacid")) {
                 sendCaptureBlockedMessage(living);
