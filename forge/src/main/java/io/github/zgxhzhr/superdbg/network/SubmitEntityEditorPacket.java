@@ -5,6 +5,7 @@ import io.github.zgxhzhr.superdbg.entity.EntityEditorService;
 import io.github.zgxhzhr.superdbg.entity.PlayerAttributeOverrides;
 import io.github.zgxhzhr.superdbg.menu.EntityEditorMenu;
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
@@ -38,7 +39,9 @@ public record SubmitEntityEditorPacket(int entityId,
                                        io.github.zgxhzhr.superdbg.loot.LootConfig entityLoot,
                                        io.github.zgxhzhr.superdbg.loot.LootConfig typeLoot,
                                        boolean hasGiftPage,
-                                       io.github.zgxhzhr.superdbg.gift.GiftPoolConfig giftPool) {
+                                       io.github.zgxhzhr.superdbg.gift.GiftPoolConfig giftPool,
+                                       String renderName,
+                                       EntityEditorData.FoxMaidSnapshot foxMaid) {
 
     public void encode(FriendlyByteBuf buf) {
         buf.writeVarInt(entityId);
@@ -85,6 +88,10 @@ public record SubmitEntityEditorPacket(int entityId,
         if (hasGiftPage) {
             io.github.zgxhzhr.superdbg.gift.GiftPoolConfig.write(buf, giftPool);
         }
+        // 玩家渲染名：由调试器本体存储，非玩家为 null
+        EntityEditorData.writeNullableUtf(buf, renderName);
+        // 人是狐玩家快照：非玩家/未安装时为 null，服务端 PlayerMaidCompat 内部跳过
+        EntityEditorData.writeFoxMaid(buf, foxMaid);
     }
 
     private static void writeTrades(FriendlyByteBuf buf, List<EntityEditorData.TradeEntry> trades) {
@@ -225,9 +232,11 @@ public record SubmitEntityEditorPacket(int entityId,
         if (hasGiftPage) {
             giftPool = io.github.zgxhzhr.superdbg.gift.GiftPoolConfig.read(buf);
         }
+        String renderName = EntityEditorData.readNullableUtf(buf);
+        EntityEditorData.FoxMaidSnapshot foxMaid = EntityEditorData.readFoxMaid(buf);
         return new SubmitEntityEditorPacket(id, attrs, effects, traits, hostilityLevel, health,
                 remove, removalGuard, curiosSlots, bond, trades, hasLootPage, entityLoot, typeLoot,
-                hasGiftPage, giftPool);
+                hasGiftPage, giftPool, renderName, foxMaid);
     }
 
     public void handle(Supplier<NetworkEvent.Context> ctxSupplier) {
@@ -298,7 +307,23 @@ public record SubmitEntityEditorPacket(int entityId,
         // 女仆回礼池写回；hasGiftPage=false（非女仆/未装 TMA）时内部整体跳过
         EntityEditorService.applyGiftPool(target, hasGiftPage, giftPool);
 
+        // 人是狐玩家状态写回；非玩家/未装 playermaid 时内部直接跳过
+        io.github.zgxhzhr.superdbg.compat.playermaid.PlayerMaidCompat.apply(target, foxMaid);
+
         if (target instanceof ServerPlayer targetPlayer) {
+            // 玩家渲染名写回（调试器本体存储，不依赖任何第三方模组）
+            io.github.zgxhzhr.superdbg.entity.RenderNameStore.set(targetPlayer, renderName);
+            // 真实改名：通过 PlayerEvent.NameFormat 覆写显示名（setCustomName 对玩家无效——
+            // 1.20.1 的 Player.getDisplayName 直接基于 GameProfile 名并缓存 displayname）。
+            // 这里清除 displayname 缓存，使下一次 getDisplayName 重新走 NameFormat 事件拿到新名。
+            io.github.zgxhzhr.superdbg.Constants.LOG.info(
+                    "[SuperDbg] 渲染名提交 renderName={}", renderName);
+            targetPlayer.refreshDisplayName();
+            io.github.zgxhzhr.superdbg.Constants.LOG.info(
+                    "[SuperDbg] setCustomName 完成 customName={}", targetPlayer.getDisplayName().getString());
+            // 广播渲染名：SyncRenderNamePacket（头顶名牌/客户端缓存）+
+            // PlayerInfoUpdatePacket（Tab 列表/社交屏幕显示名）
+            io.github.zgxhzhr.superdbg.event.PlayerDisplayNameHandler.broadcast(player.getServer(), targetPlayer);
             // 立即再强制一次，保证提交当 tick 结束前值已稳定
             PlayerAttributeOverrides.enforce(targetPlayer);
         }

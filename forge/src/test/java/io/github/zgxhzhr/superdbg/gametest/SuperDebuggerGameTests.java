@@ -25,6 +25,7 @@ import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.animal.Sheep;
 import net.minecraft.world.entity.monster.Zombie;
@@ -406,8 +407,10 @@ public class SuperDebuggerGameTests {
     public void submitItemPacketRoundTrip(GameTestHelper helper) {
         Map<ResourceLocation, Integer> ench = Map.of(SHARPNESS_ID, 11);
         Map<ResourceLocation, Double> attrs = Map.of(ATTACK_DAMAGE_ID, 20.5D);
+        Map<ResourceLocation, EquipmentSlot> slots =
+                Map.of(ATTACK_DAMAGE_ID, EquipmentSlot.HEAD);
         SubmitItemEditorPacket original =
-                new SubmitItemEditorPacket("测试", true, false, ench, attrs);
+                new SubmitItemEditorPacket("测试", true, false, ench, attrs, slots);
 
         FriendlyByteBuf buf = new FriendlyByteBuf(Unpooled.buffer());
         original.encode(buf);
@@ -418,6 +421,8 @@ public class SuperDebuggerGameTests {
         helper.assertTrue(!decoded.debug(), "debug 往返");
         helper.assertTrue(decoded.enchantments().get(SHARPNESS_ID) == 11, "附魔往返");
         assertDouble(helper, 20.5D, decoded.attributes().get(ATTACK_DAMAGE_ID), "属性往返");
+        helper.assertTrue(decoded.attributeSlots().get(ATTACK_DAMAGE_ID) == EquipmentSlot.HEAD,
+                "属性生效槽位往返");
         helper.succeed();
     }
 
@@ -627,8 +632,10 @@ public class SuperDebuggerGameTests {
                 new io.github.zgxhzhr.superdbg.gift.GiftPoolConfig(List.of(
                         new io.github.zgxhzhr.superdbg.gift.GiftPoolConfig.GiftEntry(
                                 new ResourceLocation("minecraft", "diamond"), 1, 3, 5, giftTag)));
+        EntityEditorData.FoxMaidSnapshot foxMaid = new EntityEditorData.FoxMaidSnapshot(
+                true, true, "小狐狸", "执火人", 192, "ALL", true, "touhou_little_maid:model_husk");
         new SubmitEntityEditorPacket(7, attrs, effects, traits, 12, 25.0F, true, false, List.of(), null, trades,
-                true, entityLoot, null, true, giftPool).encode(subBuf);
+                true, entityLoot, null, true, giftPool, "调试名", foxMaid).encode(subBuf);
         SubmitEntityEditorPacket decoded = SubmitEntityEditorPacket.decode(subBuf);
         helper.assertTrue(decoded.entityId() == 7, "Submit 包 entityId 往返");
         assertDouble(helper, 40.0D, decoded.attrs().get(MAX_HEALTH_ID), "Submit 包属性往返");
@@ -636,6 +643,7 @@ public class SuperDebuggerGameTests {
         helper.assertTrue(decoded.effects().get(0).duration() == -1, "Submit 包效果时长往返");
         helper.assertTrue(decoded.traits().get(0).level() == 255, "Submit 包词条等级往返");
         helper.assertTrue(decoded.hostilityLevel() == 12, "Submit 包难度等级往返");
+        helper.assertTrue("调试名".equals(decoded.renderName()), "Submit 包渲染名往返");
         helper.assertTrue(decoded.health() == 25.0F, "Submit 包当前血量往返");
         helper.assertTrue(decoded.removeEntity(), "Submit 包移除标志往返");
         helper.assertTrue(decoded.trades() != null && decoded.trades().size() == 1
@@ -659,6 +667,15 @@ public class SuperDebuggerGameTests {
                         && decoded.giftPool().entries().get(0).maxCount() == 3
                         && "gift".equals(decoded.giftPool().entries().get(0).tag().getString("Mark")),
                 "Submit 包女仆回礼池往返");
+        helper.assertTrue(decoded.foxMaid() != null
+                        && decoded.foxMaid().present()
+                        && decoded.foxMaid().active()
+                        && "小狐狸".equals(decoded.foxMaid().renderName())
+                        && "执火人".equals(decoded.foxMaid().ownerName())
+                        && decoded.foxMaid().favorability() == 192
+                        && "ALL".equals(decoded.foxMaid().schedule())
+                        && decoded.foxMaid().invulnerable(),
+                "Submit 包人是狐快照往返");
 
         // 快照编解码（entityId 先写，removable + 血量 + 属性/效果/词条/难度，与 extraData 顺序一致）
         FriendlyByteBuf snapBuf = new FriendlyByteBuf(Unpooled.buffer());
@@ -670,32 +687,45 @@ public class SuperDebuggerGameTests {
                         new ResourceLocation("l2hostility", "regeneration"), 3)),
                 5, true, List.of(), null, null, null, null,
                 new io.github.zgxhzhr.superdbg.loot.VanillaLootSnapshot(List.of()),
-                null);
+                null, "调试名", new EntityEditorData.FoxMaidSnapshot(
+                        true, false, null, "主人", 64, "DAY", false, null), true);
         EntityEditorData snapshot = EntityEditorData.readSnapshot(snapBuf, snapBuf.readVarInt());
         helper.assertTrue(snapshot.entityId() == 9, "快照 entityId 往返");
         helper.assertTrue(!snapshot.removable(), "快照 removable=false（女仆）往返");
         helper.assertTrue(snapshot.health() == 18.5F, "快照当前血量往返");
+        helper.assertTrue(snapshot.pseudoCreative(), "快照伪创造开关往返");
         assertDouble(helper, 40.5D, snapshot.attrs().get(0).baseValue(), "快照属性往返");
         helper.assertTrue(snapshot.effects().get(0).duration() == 200, "快照效果往返");
         helper.assertTrue(snapshot.traits().get(0).level() == 3, "快照词条往返");
         helper.assertTrue(snapshot.hostilityLevel() == 5, "快照难度等级往返");
+        helper.assertTrue("调试名".equals(snapshot.renderName()), "快照渲染名字往返");
+        helper.assertTrue(snapshot.foxMaid() != null
+                        && snapshot.foxMaid().present()
+                        && !snapshot.foxMaid().active()
+                        && snapshot.foxMaid().renderName() == null
+                        && "主人".equals(snapshot.foxMaid().ownerName())
+                        && snapshot.foxMaid().favorability() == 64
+                        && "DAY".equals(snapshot.foxMaid().schedule())
+                        && !snapshot.foxMaid().invulnerable(),
+                "快照人是狐字段往返");
         helper.succeed();
     }
 
     /**
-     * 物品属性上限：全部放宽到 int 最大值，下限保留。
+     * 物品属性范围：动态枚举全部注册属性，统一钳制在 ±int 最大值。
      */
     @GameTest(template = "empty")
     public void itemEditorAttributeMaxExpanded(GameTestHelper helper) {
         // 攻击伤害（原上限 2048）：超大值钳到 int 最大值
-        var attackDamage = EditableAttribute.ALL.stream()
+        var attackDamage = EditableAttribute.all().stream()
                 .filter(e -> e.attribute() == Attributes.ATTACK_DAMAGE).findFirst().orElseThrow();
         assertDouble(helper, (double) Integer.MAX_VALUE,
                 attackDamage.normalize(1.0E12), "攻击伤害上限");
-        assertDouble(helper, 0.0D, attackDamage.normalize(-5.0D), "攻击伤害下限仍为 0");
+        // 动态化后各项统一 ±int 最大值，负输入保留（下限不再按属性硬编码）
+        assertDouble(helper, -5.0D, attackDamage.normalize(-5.0D), "攻击伤害负输入保留");
 
         // 击退抗性（原上限 1）也放开
-        var knockback = EditableAttribute.ALL.stream()
+        var knockback = EditableAttribute.all().stream()
                 .filter(e -> e.attribute() == Attributes.KNOCKBACK_RESISTANCE).findFirst().orElseThrow();
         assertDouble(helper, (double) Integer.MAX_VALUE,
                 knockback.normalize((double) Integer.MAX_VALUE), "击退抗性上限");

@@ -46,7 +46,10 @@ public class EntityEditorMenu extends AbstractContainerMenu {
                 EntityEditorService.readEntityLoot(target),
                 EntityEditorService.readTypeLoot(target),
                 io.github.zgxhzhr.superdbg.loot.VanillaLootParser.parse(target),
-                EntityEditorService.readGiftPool(target));
+                EntityEditorService.readGiftPool(target),
+                io.github.zgxhzhr.superdbg.entity.RenderNameStore.get(target),
+                io.github.zgxhzhr.superdbg.compat.playermaid.PlayerMaidCompat.snapshot(target),
+                io.github.zgxhzhr.superdbg.entity.PseudoCreativeState.isEnabled(target));
     }
 
     /** 客户端构造（IForgeMenuType 工厂，从 extraData 读取） */

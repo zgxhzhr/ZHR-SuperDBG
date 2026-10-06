@@ -11,7 +11,7 @@ import net.minecraftforge.network.simple.SimpleChannel;
 public final class NetworkHandler {
 
     /** 协议版本，服务端与客户端不一致时拒绝连接。 */
-    private static final String PROTOCOL_VERSION = "15";
+    private static final String PROTOCOL_VERSION = "17";
 
     public static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
             new ResourceLocation(Constants.MOD_ID, "main"),
@@ -132,6 +132,34 @@ public final class NetworkHandler {
                 GiveItemPacket::encode,
                 GiveItemPacket::decode,
                 GiveItemPacket::handle
+        );
+        CHANNEL.registerMessage(
+                id++,
+                SyncRenderNamePacket.class,
+                SyncRenderNamePacket::encode,
+                SyncRenderNamePacket::decode,
+                SyncRenderNamePacket::handle
+        );
+        CHANNEL.registerMessage(
+                id++,
+                SetFoxSlabModelPacket.class,
+                SetFoxSlabModelPacket::encode,
+                SetFoxSlabModelPacket::decode,
+                SetFoxSlabModelPacket::handle
+        );
+        CHANNEL.registerMessage(
+                id++,
+                SetRenderNamePacket.class,
+                SetRenderNamePacket::encode,
+                SetRenderNamePacket::decode,
+                SetRenderNamePacket::handle
+        );
+        CHANNEL.registerMessage(
+                id++,
+                SetPseudoCreativePacket.class,
+                SetPseudoCreativePacket::encode,
+                SetPseudoCreativePacket::decode,
+                SetPseudoCreativePacket::handle
         );
     }
 }

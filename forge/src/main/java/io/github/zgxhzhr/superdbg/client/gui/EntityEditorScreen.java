@@ -1,5 +1,6 @@
 package io.github.zgxhzhr.superdbg.client.gui;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import io.github.zgxhzhr.superdbg.entity.EntityEditorData;
 import io.github.zgxhzhr.superdbg.loot.LootConfig;
 import io.github.zgxhzhr.superdbg.loot.LootMath;
@@ -22,9 +23,14 @@ import net.minecraft.world.entity.ai.attributes.Attribute;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraftforge.registries.ForgeRegistries;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -40,10 +46,16 @@ import java.util.Map;
  *   <li>词条：L2Hostility 词条等级（0=无该词条，最高 255）与难度等级；
  *       仅在安装 L2Hostility 且目标拥有词条能力时出现</li>
  *   <li>饰品/羁绊/交易：按目标类型（Curios/女仆/村民）出现</li>
+ *   <li>人是狐：仅目标为玩家且安装人是狐时出现；开关、主人、
+ *       好感度点数（0-384）、日程、无敌</li>
+ *   <li>渲染名：目标为玩家时出现（由调试器本体存储与渲染，不依赖任何第三方模组），
+ *       位于面板底部公共区，任意页签可见，仅替换头顶名牌不影响真实名字</li>
  *   <li>获取：仅目标为玩家时出现；快速发放物品（物品 + 总数 + 每组个数，
  *       每组可超原版上限至 999），独立「发放给玩家」按钮即发，不进主提交</li>
+ *   <li>杂项：移除实体（仅可移除目标）、防移除、伪创造模式（仅玩家目标；
+ *       受击流程正常但生命值不掉，勾选即时发送持久化，不进主提交）</li>
  * </ul>
- * 底部"移除实体"勾选后点确认：生物直接移除，玩家走死亡流程。
+ * 杂项页"移除实体"勾选后点确认：生物直接移除，玩家走死亡流程。
  * 点击"确认"时全量原子提交。
  */
 public class EntityEditorScreen extends AbstractContainerScreen<EntityEditorMenu> {
@@ -64,7 +76,9 @@ public class EntityEditorScreen extends AbstractContainerScreen<EntityEditorMenu
         TRADE("交易"),
         LOOT("掉落"),
         GIFT("赠礼"),
-        GIVE("获取");
+        FOX("人是狐"),
+        GIVE("获取"),
+        MISC("杂项");
 
         private final String label;
 
@@ -148,6 +162,26 @@ public class EntityEditorScreen extends AbstractContainerScreen<EntityEditorMenu
     private int giftScroll = 0;
     private Button addGiftPoolButton;
 
+    /** 人是狐页：行标签与控件（每行一个），仅玩家目标且安装 playermaid 时构建 */
+    private final List<String> foxRowLabels = new ArrayList<>();
+    private final List<AbstractWidget> foxWidgets = new ArrayList<>();
+    private Checkbox foxActiveBox;
+    private EditBox foxRenderBox;
+    /** 上次已发送到服务端的渲染名（trim 后）；用于关闭界面时判断是否需要补发 */
+    private String lastSentRenderName = "";
+    private EditBox foxOwnerBox;
+    private EditBox foxFavorBox;
+    private Button foxSlabModelButton;
+    /** 魂符展示模型可选列表（客户端反射自车万女仆（Touhou Little Maid，作者 TartaricAcid，MIT 协议开源）），点击按钮循环切换 */
+    private final List<String> foxSlabModels = new ArrayList<>();
+    /** 当前选中的魂符展示模型 id（空白表示不渲染模型） */
+    private String foxSlabModelSelected = "";
+    private Button foxScheduleButton;
+    /** 日程模式名（DAY/NIGHT/ALL），随日程按钮本地循环切换 */
+    private String foxSchedule = "DAY";
+    private Checkbox foxInvulnBox;
+    private int foxScroll = 0;
+
     /** 当前可用的页签（按目标实体类型裁剪），下拉列表按此构建 */
     private final List<Tab> availableTabs = new ArrayList<>();
     private Button tabButton;
@@ -160,6 +194,8 @@ public class EntityEditorScreen extends AbstractContainerScreen<EntityEditorMenu
     private Button giveButton;
     private Checkbox removeBox;
     private Checkbox removalGuardBox;
+    /** 伪创造模式开关（仅玩家目标构建；即时发送，不走主提交） */
+    private Checkbox pseudoCreativeBox;
     private Button confirmButton;
     private Button cancelButton;
     /** 跳转 gamerule 编辑器按钮（仅 creative+OP 可见） */
@@ -211,6 +247,47 @@ public class EntityEditorScreen extends AbstractContainerScreen<EntityEditorMenu
         }
     }
 
+    @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        // 本界面继承 AbstractContainerScreen，原版会把背包键（默认 E）当成“打开/关闭背包”，
+        // 在编辑界面里打字或误按都会把面板直接关掉。这里吞掉背包键使其不触发关闭；
+        // 文本框仍由 charTyped 单独接收字符，界面可正常用 ESC 或“取消”关闭。
+        if (this.minecraft != null && this.minecraft.options.keyInventory.isActiveAndMatches(
+                InputConstants.getKey(keyCode, scanCode))) {
+            return true;
+        }
+        // 渲染名框处于焦点时按回车：发送当前值到服务端（不再每敲一键发包）
+        if (foxRenderBox != null && foxRenderBox.isFocused()
+                && (keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_ENTER
+                || keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_KP_ENTER)) {
+            superdbg$sendRenderName();
+            return true;
+        }
+        return super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
+    /** 界面关闭（ESC/取消/切屏）时：若渲染名有未发送的变化则补发一次。 */
+    @Override
+    public void removed() {
+        if (foxRenderBox != null) {
+            superdbg$sendRenderName();
+        }
+        super.removed();
+    }
+
+    /** 渲染名值有变化时发送到服务端并记录基线（空白即清除语义由服务端处理）。 */
+    private void superdbg$sendRenderName() {
+        if (foxRenderBox == null) {
+            return;
+        }
+        String value = foxRenderBox.getValue().trim();
+        if (!value.equals(lastSentRenderName)) {
+            lastSentRenderName = value;
+            NetworkHandler.CHANNEL.sendToServer(
+                    new io.github.zgxhzhr.superdbg.network.SetRenderNamePacket(menu.getEntityId(), value));
+        }
+    }
+
     private void superdbg$initContent() {
         BuiltInRegistries.MOB_EFFECT.iterator().forEachRemaining(allEffects::add);
         allEffects.sort((a, b) -> a.getDisplayName().getString().compareTo(b.getDisplayName().getString()));
@@ -234,6 +311,11 @@ public class EntityEditorScreen extends AbstractContainerScreen<EntityEditorMenu
                 && io.github.zgxhzhr.superdbg.entity.EntityEditorService.isTouhouMaid(selfLiving);
         boolean hasGiftPage = isMaidTarget
                 && io.github.zgxhzhr.superdbg.compat.tma.TmaBondCompat.LOADED;
+        // 人是狐页：玩家目标 + 已安装人是狐 + 服务端快照存在
+        boolean hasFoxPage = isPlayerTarget
+                && io.github.zgxhzhr.superdbg.compat.playermaid.PlayerMaidCompat.LOADED
+                && menu.getData().foxMaid() != null
+                && menu.getData().foxMaid().present();
         availableTabs.add(Tab.ATTR);
         availableTabs.add(Tab.EFFECT);
         if (hasTraits) {
@@ -256,9 +338,15 @@ public class EntityEditorScreen extends AbstractContainerScreen<EntityEditorMenu
         if (hasGiftPage) {
             availableTabs.add(Tab.GIFT);
         }
+        if (hasFoxPage) {
+            availableTabs.add(Tab.FOX);
+        }
         if (isPlayerTarget) {
             availableTabs.add(Tab.GIVE);
         }
+        // 杂项页所有目标类型均可用：移除/防移除仅对可移除目标（removable）显示，
+        // 伪创造开关仅对玩家目标显示（服务端另有校验）
+        availableTabs.add(Tab.MISC);
         // 点击展开页签下拉列表（页签多了以后 CycleButton 逐个点太费劲）
         tabButton = Button.builder(
                 Component.literal("页面：" + Tab.ATTR.label + " ▾"),
@@ -497,17 +585,110 @@ public class EntityEditorScreen extends AbstractContainerScreen<EntityEditorMenu
             rebuildGiftRows();
         }
 
-        // ---- 底部公共区 ----
-        removeBox = new Checkbox(leftPos + 12, topPos + 190, 110, 18,
+        // ---- 人是狐页：玩家专属（playermaid 已加载），初值取打开时的服务端快照 ----
+        if (hasFoxPage) {
+            var fox = menu.getData().foxMaid();
+
+            foxActiveBox = new Checkbox(leftPos + 150, 0, 20, 16,
+                    Component.empty(), fox.active());
+            foxActiveBox.setTooltip(Tooltip.create(Component.literal(
+                    "勾选后该玩家按 E 打开女仆界面，其他玩家非潜行右键可查看/操作")));
+            addRenderableWidget(foxActiveBox);
+            addFoxRow("人是狐开关", foxActiveBox);
+
+            foxOwnerBox = new EditBox(font, leftPos + 148, 0, 100, 16,
+                    Component.literal("主人"));
+            foxOwnerBox.setMaxLength(64);
+            if (fox.ownerName() != null) {
+                foxOwnerBox.setValue(fox.ownerName());
+            }
+            addRenderableWidget(foxOwnerBox);
+            addFoxRow("主人", foxOwnerBox);
+
+            foxFavorBox = new EditBox(font, leftPos + 150, 0, 60, 16,
+                    Component.literal("好感度点数"));
+            foxFavorBox.setMaxLength(3);
+            foxFavorBox.setFilter(s -> s.isEmpty() || s.matches("\\d{1,3}"));
+            foxFavorBox.setValue(String.valueOf(Math.max(0,
+                    Math.min(io.github.zgxhzhr.superdbg.compat.playermaid.PlayerMaidCompat.MAX_FAVORABILITY,
+                            fox.favorability()))));
+            foxFavorBox.setTooltip(Tooltip.create(Component.literal(
+                    "0-384；阈值 64/192/384 对应等级 0/1/2/3")));
+            addRenderableWidget(foxFavorBox);
+            addFoxRow("好感度点数(0-384)", foxFavorBox);
+
+            // 魂符展示模型：打开车万女仆（Touhou Little Maid，作者 TartaricAcid，MIT 协议开源）
+            // 的可视化模型选择界面（模型列表反射自 CustomPackLoader.MAID_MODELS）
+            foxSlabModels.addAll(collectMaidModelIds());
+            boolean hasModels = !foxSlabModels.isEmpty();
+            foxSlabModelSelected = (fox != null && fox.slabModelId() != null) ? fox.slabModelId() : "";
+            // 已存值不在列表里则补进列表，保证可视化界面里能重新选回原值
+            if (hasModels && !foxSlabModelSelected.isEmpty() && !foxSlabModels.contains(foxSlabModelSelected)) {
+                foxSlabModels.add(foxSlabModelSelected);
+            }
+            foxSlabModelButton = Button.builder(
+                    Component.literal(truncateForButton(foxSlabModelSelected)), b -> {
+                        if (!foxSlabModels.isEmpty()) {
+                            minecraft.setScreen(new MaidSkinPickerScreen(
+                                    foxSlabModels, foxSlabModelSelected, this::onSlabModelPicked));
+                        }
+                    }).bounds(leftPos + 148, 0, 100, 16).build();
+            if (!hasModels) {
+                // 车万女仆未安装或模型列表读取失败：按钮退化为禁用态
+                foxSlabModelButton.active = false;
+                foxSlabModelButton.setMessage(Component.literal("（无模型可选）"));
+            }
+            foxSlabModelButton.setTooltip(Tooltip.create(Component.literal(
+                    "被收容进魂符后，魂符预览展示的车万女仆模型 id；点击打开可视化选择界面，留空则不渲染模型")));
+            addRenderableWidget(foxSlabModelButton);
+            addFoxRow("魂符展示模型", foxSlabModelButton);
+
+            foxSchedule = fox.schedule() == null ? "DAY" : fox.schedule();
+            foxScheduleButton = Button.builder(
+                    Component.literal(scheduleDisplayName(foxSchedule)), b -> {
+                        foxSchedule = nextSchedule(foxSchedule);
+                        b.setMessage(Component.literal(scheduleDisplayName(foxSchedule)));
+                    }).bounds(leftPos + 150, 0, 60, 16).build();
+            addRenderableWidget(foxScheduleButton);
+            addFoxRow("日程模式", foxScheduleButton);
+
+            foxInvulnBox = new Checkbox(leftPos + 150, 0, 20, 16,
+                    Component.empty(), fox.invulnerable());
+            addRenderableWidget(foxInvulnBox);
+            addFoxRow("无敌(展示属性)", foxInvulnBox);
+        }
+
+        // ---- 杂项页：移除实体 / 防移除 / 伪创造（原底部公共区的移除与防移除迁移至此）----
+        removeBox = new Checkbox(leftPos + 12, topPos + CONTENT_TOP + 1, 110, 18,
                 Component.literal("移除实体"), false);
         // 女仆受保护：界面不提供移除入口（服务端另有兜底校验）
-        removeBox.visible = menu.getData().removable();
+        removeBox.setTooltip(Tooltip.create(Component.literal(
+                "勾选后点确认：生物直接移除，玩家走死亡流程")));
         addRenderableWidget(removeBox);
 
         // 防移除：指令/其他模组清除失效，正常伤害仍可杀死
-        removalGuardBox = new Checkbox(leftPos + 12, topPos + 208, 110, 18,
-                Component.literal("防移除"), menu.getData().removalGuard());
+        removalGuardBox = new Checkbox(leftPos + 12, topPos + CONTENT_TOP + ROW_HEIGHT + 1,
+                110, 18, Component.literal("防移除"), menu.getData().removalGuard());
+        removalGuardBox.setTooltip(Tooltip.create(Component.literal(
+                "指令/其他模组清除失效，正常伤害仍可杀死")));
         addRenderableWidget(removalGuardBox);
+
+        // 伪创造模式：仅玩家目标显示；受击流程正常但生命值不掉（勾选即时发送，不进主提交）
+        if (isPlayerTarget) {
+            pseudoCreativeBox = new Checkbox(leftPos + 12, topPos + CONTENT_TOP + ROW_HEIGHT * 2 + 1,
+                    110, 18, Component.literal("伪创造模式"), menu.getData().pseudoCreative()) {
+                @Override
+                public void onPress() {
+                    super.onPress();
+                    superdbg$sendPseudoCreative();
+                }
+            };
+            pseudoCreativeBox.setTooltip(Tooltip.create(Component.literal(
+                    "开启后受击流程完全正常（索敌/命中/音效/击退/红闪照旧），只是生命值不掉："
+                            + "创造模式锁血为开启瞬间值，生存模式受击后自动拉回；"
+                            + "重进世界仍生效（持久化）")));
+            addRenderableWidget(pseudoCreativeBox);
+        }
 
         // 当前生命值（仅属性页显示），整数输入，服务端钳制到 [0, 最大生命]
         healthBox = new EditBox(font, leftPos + 190, topPos + 191, 54, 16,
@@ -526,6 +707,24 @@ public class EntityEditorScreen extends AbstractContainerScreen<EntityEditorMenu
             healthBox.setTooltip(Tooltip.create(Component.literal("女仆的当前血量始终回满，无需输入")));
         }
         addRenderableWidget(healthBox);
+
+        // 玩家渲染名：由调试器本体存储与渲染，不依赖任何第三方模组；任意页签都可见可改。
+        // 更改玩家显示名（头顶名牌、Tab 列表、聊天与死亡消息同步），不改真实名字/UUID。
+        // 发送时机：焦点框按回车，或关闭界面（ESC/取消）时若值有变化再补发，避免每敲一键发包。
+        if (isPlayerTarget) {
+            foxRenderBox = new EditBox(font, leftPos + 154, topPos + 210, 96, 16,
+                    Component.literal("渲染名"));
+            foxRenderBox.setMaxLength(64);
+            if (menu.getData().renderName() != null) {
+                foxRenderBox.setValue(menu.getData().renderName());
+            }
+            // 初始化后记录“已发送”基线（快照值），避免初始误发
+            lastSentRenderName = menu.getData().renderName() == null
+                    ? "" : menu.getData().renderName().trim();
+            foxRenderBox.setTooltip(Tooltip.create(Component.literal(
+                    "更改玩家显示名，同步到头顶名牌、Tab 列表、聊天与死亡消息；留空则恢复真实名")));
+            addRenderableWidget(foxRenderBox);
+        }
 
         addEffectButton = Button.builder(Component.literal("添加效果"), b -> openPicker())
                 .bounds(leftPos + 160, topPos + 190, 88, 18)
@@ -624,6 +823,9 @@ public class EntityEditorScreen extends AbstractContainerScreen<EntityEditorMenu
         if (addGiftPoolButton != null) {
             addGiftPoolButton.visible = gift;
         }
+        for (var w : foxWidgets) {
+            w.visible = newTab == Tab.FOX;
+        }
         updateAttrVisibility();
         updateEffectVisibility();
         updateTraitVisibility();
@@ -633,6 +835,8 @@ public class EntityEditorScreen extends AbstractContainerScreen<EntityEditorMenu
         updateGiveVisibility();
         updateLootVisibility();
         updateGiftVisibility();
+        updateFoxVisibility();
+        updateMiscVisibility();
         setFocused(null);
     }
 
@@ -702,6 +906,19 @@ public class EntityEditorScreen extends AbstractContainerScreen<EntityEditorMenu
         }
         if (addGiftPoolButton != null) {
             addGiftPoolButton.visible = false;
+        }
+        for (AbstractWidget w : foxWidgets) {
+            w.visible = false;
+        }
+        // 杂项页控件位于内容区（与下拉列表重叠），展开时必须隐藏
+        if (removeBox != null) {
+            removeBox.visible = false;
+        }
+        if (removalGuardBox != null) {
+            removalGuardBox.visible = false;
+        }
+        if (pseudoCreativeBox != null) {
+            pseudoCreativeBox.visible = false;
         }
         // 每次展开都重建选项按钮：若复用旧按钮（上次 init 全量重建后已不在控件列表里），
         // 会再次 addRenderableWidget 造成 children 重复注册——每开关一次同一按钮多一份，
@@ -910,6 +1127,173 @@ public class EntityEditorScreen extends AbstractContainerScreen<EntityEditorMenu
                 widget.setY(topPos + CONTENT_TOP + (i - bondScroll) * ROW_HEIGHT + 1);
             }
         }
+    }
+
+    // ==================== 人是狐页 ====================
+
+    private void addFoxRow(String label, AbstractWidget widget) {
+        foxRowLabels.add(label);
+        foxWidgets.add(widget);
+        widget.visible = false;
+    }
+
+    private int maxFoxScroll() {
+        return Math.max(0, foxWidgets.size() - VISIBLE_ROWS);
+    }
+
+    private void updateFoxVisibility() {
+        for (int i = 0; i < foxWidgets.size(); i++) {
+            AbstractWidget widget = foxWidgets.get(i);
+            boolean visible = tab == Tab.FOX && i >= foxScroll && i < foxScroll + VISIBLE_ROWS;
+            widget.visible = visible;
+            if (visible) {
+                widget.setY(topPos + CONTENT_TOP + (i - foxScroll) * ROW_HEIGHT + 1);
+            }
+        }
+    }
+
+    // ==================== 杂项页 ====================
+
+    /** 杂项页控件可见性：移除仅对可移除目标，伪创造仅对玩家目标（控件未构建时跳过） */
+    private void updateMiscVisibility() {
+        boolean visible = tab == Tab.MISC && !tabListOpen;
+        if (removeBox != null) {
+            removeBox.visible = visible && menu.getData().removable();
+        }
+        if (removalGuardBox != null) {
+            removalGuardBox.visible = visible;
+        }
+        if (pseudoCreativeBox != null) {
+            pseudoCreativeBox.visible = visible;
+        }
+    }
+
+    /** 伪创造开关变化即时发送（不进主提交、不关界面） */
+    private void superdbg$sendPseudoCreative() {
+        if (pseudoCreativeBox == null) {
+            return;
+        }
+        NetworkHandler.CHANNEL.sendToServer(
+                new io.github.zgxhzhr.superdbg.network.SetPseudoCreativePacket(
+                        menu.getEntityId(), pseudoCreativeBox.selected()));
+    }
+
+    /** 日程模式名 → 中文显示 */
+    private static String scheduleDisplayName(String name) {
+        return switch (name) {
+            case "NIGHT" -> "夜晚";
+            case "ALL" -> "全天";
+            default -> "白天";
+        };
+    }
+
+    /** 日程按 白天 → 夜晚 → 全天 → 白天 循环 */
+    private static String nextSchedule(String name) {
+        return switch (name) {
+            case "DAY" -> "NIGHT";
+            case "NIGHT" -> "ALL";
+            default -> "DAY";
+        };
+    }
+
+    /** 可视化模型选择界面的选中回调：把选中的模型 id 存为当前选中值并刷新按钮文本。 */
+    private void onSlabModelPicked(String modelId) {
+        foxSlabModelSelected = modelId;
+        if (foxSlabModelButton != null) {
+            foxSlabModelButton.setMessage(Component.literal(truncateForButton(foxSlabModelSelected)));
+        }
+        // 点选后立即发送到服务端持久化（不依赖保存按钮）；保存按钮的全量提交仍会再写一次，幂等
+        NetworkHandler.CHANNEL.sendToServer(
+                new io.github.zgxhzhr.superdbg.network.SetFoxSlabModelPacket(menu.getEntityId(), modelId));
+    }
+
+    /** 按钮文本截断：按按钮宽度（100px）截断，避免超长模型 id 溢出按钮。 */
+    private String truncateForButton(String text) {
+        if (text.isEmpty()) {
+            return text;
+        }
+        return font.plainSubstrByWidth(text, 94);
+    }
+
+    /**
+     * 反射读取车万女仆（Touhou Little Maid，作者 TartaricAcid，MIT 协议开源）
+     * 已加载的女仆模型 id 列表（元素为 {@code namespace:path} 完整模型 id，
+     * 与 {@code EntityMaid#setModelId} 期望的格式一致）。
+     *
+     * <p>取 {@code CustomPackLoader.MAID_MODELS}（MaidModels 单例）上「无参且返回
+     * Collection/Set」的方法调用。优先精确方法名 {@code getModelIdSet()}（车万女仆
+     * 自有方法，生产不混淆）；签名兜底时优先泛型元素为 String / ResourceLocation
+     * 的方法，避免误取到返回模型包列表的 {@code getPackList()}（其泛型元素是包对象
+     * 而非模型 id）。任一环节失败均返回空列表，由调用方把按钮置为禁用态。</p>
+     */
+    @SuppressWarnings("unchecked")
+    private static List<String> collectMaidModelIds() {
+        try {
+            Class<?> loader = Class.forName("com.github.tartaricacid.touhoulittlemaid.client.resource.CustomPackLoader");
+            Field maidModelsField = loader.getDeclaredField("MAID_MODELS");
+            maidModelsField.setAccessible(true);
+            Object maidModels = maidModelsField.get(null);
+            if (maidModels == null) {
+                return List.of();
+            }
+            Method best = null;
+            // 优先精确方法名 getModelIdSet（车万女仆自有方法名，生产 jar 不混淆）
+            try {
+                best = maidModels.getClass().getMethod("getModelIdSet");
+            } catch (NoSuchMethodException ignored) {
+            }
+            if (best == null) {
+                // 按签名兜底：无参且返回 Collection/Set；优先泛型元素为 String 或 ResourceLocation 的方法
+                for (Method method : maidModels.getClass().getMethods()) {
+                    if (method.getParameterCount() != 0) {
+                        continue;
+                    }
+                    Class<?> ret = method.getReturnType();
+                    if (!Collection.class.isAssignableFrom(ret)) {
+                        continue;
+                    }
+                    if (best == null) {
+                        best = method;
+                    }
+                    if (isStringOrResourceLocationCollection(method) && !isStringOrResourceLocationCollection(best)) {
+                        best = method;
+                    }
+                }
+            }
+            if (best == null) {
+                return List.of();
+            }
+            Object result = best.invoke(maidModels);
+            if (!(result instanceof Collection<?> coll)) {
+                return List.of();
+            }
+            List<String> ids = new ArrayList<>();
+            for (Object item : coll) {
+                if (item != null) {
+                    ids.add(item.toString());
+                }
+            }
+            // 打印收集到的完整模型 id 列表概况，便于确认可选模型（如 winefox 系列）是否在列
+            io.github.zgxhzhr.superdbg.Constants.LOG.info(
+                    "[SuperDbg] EntityEditorScreen.collectMaidModelIds: 收集到 {} 个模型 id，前 20 项: {}",
+                    ids.size(), ids.subList(0, Math.min(20, ids.size())));
+            return ids;
+        } catch (Throwable t) {
+            // 车万女仆未安装 / 字段或方法不可用：返回空列表，调用方禁用按钮
+            return List.of();
+        }
+    }
+
+    /** 判断方法返回类型是否为「泛型元素为 String 或 ResourceLocation 的 Collection/Set」。 */
+    private static boolean isStringOrResourceLocationCollection(Method method) {
+        Type generic = method.getGenericReturnType();
+        if (generic instanceof ParameterizedType type && type.getActualTypeArguments().length == 1) {
+            Type arg = type.getActualTypeArguments()[0];
+            if (arg instanceof Class<?> clazz) {
+                return String.class.isAssignableFrom(clazz) || ResourceLocation.class.isAssignableFrom(clazz);
+            }
+        }
+        return false;
     }
 
     // ==================== 交易页 ====================
@@ -1701,7 +2085,6 @@ public class EntityEditorScreen extends AbstractContainerScreen<EntityEditorMenu
         pickerScroll = 0;
         closeTabList();
         addEffectButton.visible = false;
-        removeBox.visible = false;
         healthBox.visible = false;
         levelBox.visible = false;
         confirmButton.visible = false;
@@ -1719,7 +2102,6 @@ public class EntityEditorScreen extends AbstractContainerScreen<EntityEditorMenu
         for (var w : pickerWidgets) {
             w.visible = false;
         }
-        removeBox.visible = menu.getData().removable();
         levelBox.visible = tab == Tab.TRAIT;
         confirmButton.visible = true;
         cancelButton.visible = true;
@@ -1789,6 +2171,12 @@ public class EntityEditorScreen extends AbstractContainerScreen<EntityEditorMenu
             setFocused(null);
             return true;
         }
+        if (tab == Tab.FOX) {
+            foxScroll = Math.max(0, Math.min(maxFoxScroll(), foxScroll - (delta > 0 ? 1 : -1)));
+            updateFoxVisibility();
+            setFocused(null);
+            return true;
+        }
         if (tab == Tab.TRADE) {
             tradeScroll = Math.max(0, Math.min(maxTradeScroll(), tradeScroll - (delta > 0 ? 1 : -1)));
             updateTradeVisibility();
@@ -1811,6 +2199,10 @@ public class EntityEditorScreen extends AbstractContainerScreen<EntityEditorMenu
             giftScroll = Math.max(0, Math.min(maxGiftScroll(), giftScroll - (delta > 0 ? 1 : -1)));
             updateGiftVisibility();
             setFocused(null);
+            return true;
+        }
+        if (tab == Tab.MISC) {
+            // 杂项页控件固定布局、不超过一屏，无需滚动
             return true;
         }
         attrScroll = Math.max(0, Math.min(maxAttrScroll(), attrScroll - (delta > 0 ? 1 : -1)));
@@ -1939,10 +2331,39 @@ public class EntityEditorScreen extends AbstractContainerScreen<EntityEditorMenu
             }
         }
 
+        // 玩家渲染名：由调试器本体存储与同步，不依赖任何第三方模组；控件未构建（非玩家）时为 null
+        String renderName = null;
+        if (foxRenderBox != null) {
+            String value = foxRenderBox.getValue().trim();
+            renderName = value.isEmpty() ? null : value;
+        }
+
+        // 人是狐快照全量提交；非玩家/未安装 playermaid（控件未构建）时为 null，服务端跳过。
+        // 人是狐自身的渲染名原样回传（该功能已由调试器本体接管，这里不改动它）
+        EntityEditorData.FoxMaidSnapshot foxMaid = null;
+        var foxSnap = menu.getData().foxMaid();
+        if (foxSnap != null && foxSnap.present()
+                && foxActiveBox != null && foxOwnerBox != null
+                && foxFavorBox != null && foxInvulnBox != null
+                && foxSlabModelButton != null) {
+            String ownerName = foxOwnerBox.getValue().trim();
+            int favorability = Math.max(0, Math.min(
+                    io.github.zgxhzhr.superdbg.compat.playermaid.PlayerMaidCompat.MAX_FAVORABILITY,
+                    parseIntOr(foxFavorBox.getValue(), foxSnap.favorability())));
+            // 取当前选中的模型 id，空白归一化为 null（清除语义）
+            String slabModelId = foxSlabModelSelected.isEmpty() ? null : foxSlabModelSelected;
+            foxMaid = new EntityEditorData.FoxMaidSnapshot(true,
+                    foxActiveBox.selected(),
+                    foxSnap.renderName(),
+                    ownerName.isEmpty() ? null : ownerName,
+                    favorability, foxSchedule, foxInvulnBox.selected(),
+                    slabModelId);
+        }
+
         NetworkHandler.CHANNEL.sendToServer(new SubmitEntityEditorPacket(
                 menu.getEntityId(), attrs, effects, traits, hostilityLevel,
                 health, removeBox.selected(), removalGuardBox.selected(), curiosSlots, bond,
-                trades, hasLootPage, entityLoot, typeLoot, hasGiftPage, giftPool));
+                trades, hasLootPage, entityLoot, typeLoot, hasGiftPage, giftPool, renderName, foxMaid));
         onClose();
     }
 
@@ -1984,6 +2405,12 @@ public class EntityEditorScreen extends AbstractContainerScreen<EntityEditorMenu
     protected void renderLabels(GuiGraphics graphics, int mouseX, int mouseY) {
         // renderLabels 内坐标均为相对 leftPos/topPos 的面板坐标
         graphics.drawString(font, title, 8, 6, 0x404040, false);
+
+        // 底部公共区：玩家渲染名标签（输入框在 superdbg$initContent 中创建，仅玩家目标出现）
+        if (foxRenderBox != null) {
+            graphics.drawString(font, Component.literal("渲染名"),
+                    154 - 4 - font.width("渲染名"), 214, 0x404040, false);
+        }
 
         if (pickerOpen) {
             graphics.fill(6, 8, imageWidth - 6, 21, 0x88000000);
@@ -2091,6 +2518,42 @@ public class EntityEditorScreen extends AbstractContainerScreen<EntityEditorMenu
             return;
         }
 
+        if (tab == Tab.FOX) {
+            // 人是狐页表头
+            graphics.drawString(font, Component.literal("项目"), 12, 14, 0x404040, false);
+            graphics.drawString(font, Component.literal("值"), 155, 14, 0x404040, false);
+            for (int i = 0; i < foxRowLabels.size(); i++) {
+                if (i < foxScroll || i >= foxScroll + VISIBLE_ROWS) {
+                    continue;
+                }
+                String text = foxRowLabels.get(i);
+                if (font.width(text) > 130) {
+                    text = font.plainSubstrByWidth(text, 124) + "…";
+                }
+                graphics.drawString(font, text, 12,
+                        CONTENT_TOP + (i - foxScroll) * ROW_HEIGHT + 5, 0x404040, false);
+            }
+            // 底部说明：好感度等级与距下一级所需点数实时派生（阈值 64/192/384）
+            int foxFavSnapshot = menu.getData().foxMaid() == null
+                    ? 0 : menu.getData().foxMaid().favorability();
+            int foxPoints = Math.max(0, Math.min(
+                    io.github.zgxhzhr.superdbg.compat.playermaid.PlayerMaidCompat.MAX_FAVORABILITY,
+                    parseIntOr(foxFavorBox == null ? "" : foxFavorBox.getValue(), foxFavSnapshot)));
+            String hint;
+            if (foxPoints < 64) {
+                hint = "好感度等级：0（距 1 级还需 " + (64 - foxPoints) + " 点）";
+            } else if (foxPoints < 192) {
+                hint = "好感度等级：1（距 2 级还需 " + (192 - foxPoints) + " 点）";
+            } else if (foxPoints < 384) {
+                hint = "好感度等级：2（距 3 级还需 " + (384 - foxPoints) + " 点）";
+            } else {
+                hint = "好感度等级：3（已满级）";
+            }
+            graphics.drawString(font, Component.literal(hint + "（阈值 64/192/384）"),
+                    12, 178, 0x707070, false);
+            return;
+        }
+
         if (tab == Tab.TRADE) {
             // 交易页表头
             graphics.drawString(font, Component.literal("交易列表（改/删，底部新增）"),
@@ -2165,6 +2628,20 @@ public class EntityEditorScreen extends AbstractContainerScreen<EntityEditorMenu
                         12, 28, 0x808080, false);
             }
             graphics.drawString(font, Component.literal("留空按原版上限"), 172, 178, 0x707070, false);
+            return;
+        }
+
+        if (tab == Tab.MISC) {
+            // 杂项页表头（复选框自带文字标签，此处只放说明）
+            graphics.drawString(font, Component.literal("杂项"), 12, 14, 0x404040, false);
+            if (pseudoCreativeBox != null) {
+                graphics.drawString(font, Component.literal(
+                                "伪创造：受击正常但不掉血；创造模式锁血，生存模式受击拉回"),
+                        12, 178, 0x707070, false);
+            } else {
+                graphics.drawString(font, Component.literal("移除实体：直接删除（玩家走死亡）；防移除：免疫指令/清除"),
+                        12, 178, 0x707070, false);
+            }
             return;
         }
 

@@ -1,6 +1,7 @@
 package io.github.zgxhzhr.superdbg.item;
 
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.entity.EquipmentSlot;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -22,6 +23,8 @@ public final class ItemEditorData {
     public boolean debug = false;
     /** 附魔 id → 等级（1-32767），不含未附加的附魔 */
     public final Map<ResourceLocation, Integer> enchantments = new LinkedHashMap<>();
-    /** 受管属性 id → 当前总值（ADDITION 之和） */
+    /** 属性 id → 目标总值（ADDITION 之和），涵盖全部已注册属性 */
     public final Map<ResourceLocation, Double> attributes = new LinkedHashMap<>();
+    /** 属性 id → 自定义修饰符生效的装备槽位（仅目标值与默认不同的属性实际写入） */
+    public final Map<ResourceLocation, EquipmentSlot> attributeSlots = new LinkedHashMap<>();
 }

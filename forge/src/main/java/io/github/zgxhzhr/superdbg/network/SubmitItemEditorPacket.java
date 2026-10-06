@@ -6,6 +6,7 @@ import io.github.zgxhzhr.superdbg.menu.ItemEditorMenu;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.item.ItemStack;
 import net.minecraftforge.network.NetworkEvent;
 
@@ -16,14 +17,15 @@ import java.util.function.Supplier;
 /**
  * 客户端→服务端：物品编辑器全量提交。
  * <p>
- * 一次性携带名称、标志位、附魔、属性，服务端原子写回，
+ * 一次性携带名称、标志位、附魔、属性数值与槽位，服务端原子写回，
  * 所有数值在服务端重新校验/clamp，不信任客户端。
  */
 public record SubmitItemEditorPacket(String customName,
                                      boolean unbreakable,
                                      boolean debug,
                                      Map<ResourceLocation, Integer> enchantments,
-                                     Map<ResourceLocation, Double> attributes) {
+                                     Map<ResourceLocation, Double> attributes,
+                                     Map<ResourceLocation, EquipmentSlot> attributeSlots) {
 
     public void encode(FriendlyByteBuf buf) {
         buf.writeUtf(customName);
@@ -40,6 +42,7 @@ public record SubmitItemEditorPacket(String customName,
         for (Map.Entry<ResourceLocation, Double> e : attributes.entrySet()) {
             buf.writeResourceLocation(e.getKey());
             buf.writeDouble(e.getValue());
+            buf.writeUtf(attributeSlots.getOrDefault(e.getKey(), EquipmentSlot.MAINHAND).getName());
         }
     }
 
@@ -56,10 +59,16 @@ public record SubmitItemEditorPacket(String customName,
 
         int attrCount = buf.readVarInt();
         Map<ResourceLocation, Double> attrs = new LinkedHashMap<>();
+        Map<ResourceLocation, EquipmentSlot> slots = new LinkedHashMap<>();
         for (int i = 0; i < attrCount; i++) {
-            attrs.put(buf.readResourceLocation(), buf.readDouble());
+            ResourceLocation rl = buf.readResourceLocation();
+            double val = buf.readDouble();
+            // byName 对未知名回退主手，防御异常客户端
+            EquipmentSlot slot = EquipmentSlot.byName(buf.readUtf());
+            attrs.put(rl, val);
+            slots.put(rl, slot);
         }
-        return new SubmitItemEditorPacket(name, unbreakable, debug, ench, attrs);
+        return new SubmitItemEditorPacket(name, unbreakable, debug, ench, attrs, slots);
     }
 
     public void handle(Supplier<NetworkEvent.Context> ctxSupplier) {
@@ -85,6 +94,7 @@ public record SubmitItemEditorPacket(String customName,
         data.debug = debug;
         data.enchantments.putAll(enchantments);
         data.attributes.putAll(attributes);
+        data.attributeSlots.putAll(attributeSlots);
 
         // apply 内部完成所有 clamp、registry 存在性校验、调试斧强制规则
         ItemEditorService.apply(offhand, data);

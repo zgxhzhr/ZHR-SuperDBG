@@ -5,6 +5,7 @@ import io.github.zgxhzhr.superdbg.init.ModMenus;
 import io.github.zgxhzhr.superdbg.network.NetworkHandler;
 import io.github.zgxhzhr.superdbg.event.LevelLifecycleHandler;
 import io.github.zgxhzhr.superdbg.event.PlayerInteractHandler;
+import io.github.zgxhzhr.superdbg.event.PseudoCreativeHandler;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.eventbus.api.IEventBus;
 import net.minecraftforge.event.server.ServerStartedEvent;
@@ -29,6 +30,7 @@ public class SuperDebuggerMod {
 
         MinecraftForge.EVENT_BUS.register(new PlayerInteractHandler());
         MinecraftForge.EVENT_BUS.register(new LevelLifecycleHandler());
+        MinecraftForge.EVENT_BUS.register(new PseudoCreativeHandler());
 
         // 服务端启动时遍历注册全部 gamerule（含模组自定义），构建 id→Key 映射表
         MinecraftForge.EVENT_BUS.addListener((ServerStartedEvent e) -> GameRuleRegistry.build());

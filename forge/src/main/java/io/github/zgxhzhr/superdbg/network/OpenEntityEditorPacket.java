@@ -99,7 +99,10 @@ public record OpenEntityEditorPacket(int entityId) {
                     EntityEditorService.readEntityLoot(target),
                     EntityEditorService.readTypeLoot(target),
                     io.github.zgxhzhr.superdbg.loot.VanillaLootParser.parse(target),
-                    EntityEditorService.readGiftPool(target));
+                    EntityEditorService.readGiftPool(target),
+                    io.github.zgxhzhr.superdbg.entity.RenderNameStore.get(target),
+                    io.github.zgxhzhr.superdbg.compat.playermaid.PlayerMaidCompat.snapshot(target),
+                    io.github.zgxhzhr.superdbg.entity.PseudoCreativeState.isEnabled(target));
         });
         Constants.LOG.debug("玩家 {} 打开实体编辑器：目标 {}",
                 player.getName().getString(), target.getName().getString());

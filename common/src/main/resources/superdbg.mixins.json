@@ -42,13 +42,19 @@
         "BlockPosGuardMixin",
         "ChunkMapTrackLogMixin",
         "TrackedEntityTrackLogMixin",
-        "TmaRandomGiftMixin"
+        "TmaRandomGiftMixin",
+        "PseudoCreativeDamageMixin",
+        "PseudoCreativeHealMixin",
+        "FoodDataTickMixin"
     ],
     "client": [
         "ClientPacketListenerMixin",
         "JadeStatusEffectsProviderMixin",
+        "JadeEntityNameMixin",
         "LocalPlayerTickMixin",
-        "ClientDuplicateEntityMixin"
+        "ClientDuplicateEntityMixin",
+        "PlayerEntryNameMixin",
+        "PlayerInfoDisplayNameMixin"
     ],
     "server": [
     ],

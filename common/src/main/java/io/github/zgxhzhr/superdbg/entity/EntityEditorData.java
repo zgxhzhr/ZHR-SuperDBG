@@ -3,6 +3,7 @@ package io.github.zgxhzhr.superdbg.entity;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceLocation;
 
+import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -34,6 +35,11 @@ import java.util.Map;
  * @param vanillaLoot    该实体原版战利品表的只读快照（用于界面展示参考）；
  *                       无战利品表或解析失败时 pools 为空列表
  * @param giftPool       女仆个体的 TMA 回赠礼物池配置；非女仆或无配置为 null
+ * @param renderName     玩家的自定义渲染名（仅头顶名牌与 Jade 标题，不改真实名字）；
+ *                       由调试器本体存储与同步，非玩家或未设置为 null
+ * @param foxMaid        「人是狐」（playermaid）玩家专属调试快照；非玩家或未安装人是狐时为 null
+ * @param pseudoCreative 目标玩家的伪创造模式是否开启（非玩家恒为 false）；
+ *                       仅玩家目标显示对应开关，开关即时发送不随主提交
  */
 public record EntityEditorData(int entityId,
                                boolean removable,
@@ -49,7 +55,32 @@ public record EntityEditorData(int entityId,
                                io.github.zgxhzhr.superdbg.loot.LootConfig entityLoot,
                                io.github.zgxhzhr.superdbg.loot.LootConfig typeLoot,
                                io.github.zgxhzhr.superdbg.loot.VanillaLootSnapshot vanillaLoot,
-                               io.github.zgxhzhr.superdbg.gift.GiftPoolConfig giftPool) {
+                               io.github.zgxhzhr.superdbg.gift.GiftPoolConfig giftPool,
+                               String renderName,
+                               FoxMaidSnapshot foxMaid,
+                               boolean pseudoCreative) {
+
+    /**
+     * 「人是狐」玩家专属调试快照（字段与 playermaid 的 FoxMaidApi 一一对应）。
+     *
+     * @param present      目标是否为玩家且人是狐模组已加载（false 时其余字段无意义）
+     * @param active       人是狐开关
+     * @param renderName   自定义渲染名（仅头顶名牌与 Jade 标题）；null/空串表示清除
+     * @param ownerName    主人显示名；null/空串表示清除
+     * @param favorability 好感度点数（0-384，阈值 64/192/384 对应等级 0/1/2/3）
+     * @param schedule     日程模式名：{@code DAY} / {@code NIGHT} / {@code ALL}
+     * @param invulnerable 无敌展示开关
+     * @param slabModelId  魂符展示模型 id（车万女仆女仆模型 id）；null/空串表示清除
+     */
+    public record FoxMaidSnapshot(boolean present,
+                                  boolean active,
+                                  String renderName,
+                                  String ownerName,
+                                  int favorability,
+                                  String schedule,
+                                  boolean invulnerable,
+                                  @Nullable String slabModelId) {
+    }
 
     /** 单个属性条目：注册名 + 基础值 */
     public record AttrEntry(ResourceLocation id, double baseValue) {
@@ -120,7 +151,7 @@ public record EntityEditorData(int entityId,
      * <p>
      * 顺序：removable → 当前血量 → 属性列表 → 效果列表 → 词条列表 → 难度等级 → 防移除
      * → Curios 饰品栏列表 → 女仆羁绊快照 → 交易列表 → 本实体掉落覆盖 → 全类型掉落覆盖
-     * → 原版战利品表快照 → 女仆回礼池。
+     * → 原版战利品表快照 → 女仆回礼池 → 玩家渲染名 → 人是狐玩家快照 → 伪创造开关。
      */
     public static void writeSnapshot(FriendlyByteBuf buf,
                                      boolean removable,
@@ -136,7 +167,10 @@ public record EntityEditorData(int entityId,
                                      io.github.zgxhzhr.superdbg.loot.LootConfig entityLoot,
                                      io.github.zgxhzhr.superdbg.loot.LootConfig typeLoot,
                                      io.github.zgxhzhr.superdbg.loot.VanillaLootSnapshot vanillaLoot,
-                                     io.github.zgxhzhr.superdbg.gift.GiftPoolConfig giftPool) {
+                                     io.github.zgxhzhr.superdbg.gift.GiftPoolConfig giftPool,
+                                     String renderName,
+                                     FoxMaidSnapshot foxMaid,
+                                     boolean pseudoCreative) {
         buf.writeBoolean(removable);
         buf.writeFloat(health);
 
@@ -169,6 +203,61 @@ public record EntityEditorData(int entityId,
         io.github.zgxhzhr.superdbg.loot.LootConfig.write(buf, typeLoot);
         io.github.zgxhzhr.superdbg.loot.VanillaLootSnapshot.write(buf, vanillaLoot);
         io.github.zgxhzhr.superdbg.gift.GiftPoolConfig.write(buf, giftPool);
+        writeNullableUtf(buf, renderName);
+        writeFoxMaid(buf, foxMaid);
+        buf.writeBoolean(pseudoCreative);
+    }
+
+    /**
+     * 人是狐快照写入（快照与提交包复用）：null 或 present=false
+     * （非玩家/未安装）写 false；可空字符串各自带存在标志。
+     * 魂符展示模型 id 追加在最后，旧版读取方会忽略其后的多余字节。
+     */
+    public static void writeFoxMaid(FriendlyByteBuf buf, FoxMaidSnapshot foxMaid) {
+        if (foxMaid == null || !foxMaid.present()) {
+            buf.writeBoolean(false);
+            return;
+        }
+        buf.writeBoolean(true);
+        buf.writeBoolean(foxMaid.active());
+        writeNullableUtf(buf, foxMaid.renderName());
+        writeNullableUtf(buf, foxMaid.ownerName());
+        buf.writeVarInt(foxMaid.favorability());
+        writeNullableUtf(buf, foxMaid.schedule());
+        buf.writeBoolean(foxMaid.invulnerable());
+        writeNullableUtf(buf, foxMaid.slabModelId());
+    }
+
+    /** 写入可空字符串（带存在标志）；实体编辑快照与提交包共用。 */
+    public static void writeNullableUtf(FriendlyByteBuf buf, String value) {
+        if (value == null) {
+            buf.writeBoolean(false);
+        } else {
+            buf.writeBoolean(true);
+            buf.writeUtf(value);
+        }
+    }
+
+    /** 读取可空字符串（与 {@link #writeNullableUtf} 配对）。 */
+    public static String readNullableUtf(FriendlyByteBuf buf) {
+        return buf.readBoolean() ? buf.readUtf() : null;
+    }
+
+    /** 人是狐快照读取（快照与提交包复用），与 {@link #writeFoxMaid} 配对 */
+    public static FoxMaidSnapshot readFoxMaid(FriendlyByteBuf buf) {
+        if (!buf.readBoolean()) {
+            return null;
+        }
+        boolean active = buf.readBoolean();
+        String renderName = readNullableUtf(buf);
+        String ownerName = readNullableUtf(buf);
+        int favorability = buf.readVarInt();
+        String schedule = readNullableUtf(buf);
+        boolean invulnerable = buf.readBoolean();
+        // 兼容旧包：旧版未写魂符展示模型 id 字段，缓冲区已读完则视为 null
+        String slabModelId = buf.isReadable() ? readNullableUtf(buf) : null;
+        return new FoxMaidSnapshot(true, active, renderName, ownerName,
+                favorability, schedule, invulnerable, slabModelId);
     }
 
     /** 交易列表：null（非村民）写 false；空列表也是合法快照（村民可以没有交易） */
@@ -302,9 +391,13 @@ public record EntityEditorData(int entityId,
                 io.github.zgxhzhr.superdbg.loot.VanillaLootSnapshot.read(buf);
         io.github.zgxhzhr.superdbg.gift.GiftPoolConfig giftPool =
                 io.github.zgxhzhr.superdbg.gift.GiftPoolConfig.read(buf);
+        String renderName = readNullableUtf(buf);
+        FoxMaidSnapshot foxMaid = readFoxMaid(buf);
+        // 兼容旧快照包：缓冲区已读完则视为伪创造未开启
+        boolean pseudoCreative = buf.isReadable() ? buf.readBoolean() : false;
         return new EntityEditorData(entityId, removable, health, attrs, effects, traits,
                 hostilityLevel, removalGuard, curiosSlots, bond, trades, entityLoot, typeLoot,
-                vanillaLoot, giftPool);
+                vanillaLoot, giftPool, renderName, foxMaid, pseudoCreative);
     }
 
     /**
