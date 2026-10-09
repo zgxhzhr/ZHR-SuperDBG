@@ -21,10 +21,11 @@ import java.util.function.Supplier;
  * 客户端→服务端：快捷指令（调试斧 Shift+右键空气打开面板）。
  *
  * @param action    动作类型：{@link #ACTION_TP}、{@link #ACTION_KILL_MOBS}、
- *                  {@link #ACTION_KILL_PLAYERS}、{@link #ACTION_TIME}
+ *                  {@link #ACTION_KILL_PLAYERS}、{@link #ACTION_TIME}、{@link #ACTION_WEATHER}
  * @param dimension 传送目标维度 id；非传送动作可为 null
  * @param x/y/z     传送目标坐标
- * @param time      调时间动作的时刻（tick）
+ * @param time      调时间动作的时刻（tick）；调天气动作时为天气种类
+ *                  （{@link #WEATHER_CLEAR}、{@link #WEATHER_RAIN}、{@link #WEATHER_THUNDER}）
  */
 public record QuickActionPacket(int action, ResourceLocation dimension,
                                 double x, double y, double z, int time) {
@@ -33,6 +34,14 @@ public record QuickActionPacket(int action, ResourceLocation dimension,
     public static final int ACTION_KILL_MOBS = 2;
     public static final int ACTION_KILL_PLAYERS = 3;
     public static final int ACTION_TIME = 4;
+    public static final int ACTION_WEATHER = 5;
+
+    /** {@link #ACTION_WEATHER} 的天气种类：晴天（与原版 {@code /weather clear} 一致） */
+    public static final int WEATHER_CLEAR = 0;
+    /** {@link #ACTION_WEATHER} 的天气种类：下雨 */
+    public static final int WEATHER_RAIN = 1;
+    /** {@link #ACTION_WEATHER} 的天气种类：雷雨 */
+    public static final int WEATHER_THUNDER = 2;
 
     public void encode(FriendlyByteBuf buf) {
         buf.writeVarInt(action);
@@ -76,6 +85,7 @@ public record QuickActionPacket(int action, ResourceLocation dimension,
             case ACTION_KILL_MOBS -> killMobs(player);
             case ACTION_KILL_PLAYERS -> killPlayers(player);
             case ACTION_TIME -> setTime(player);
+            case ACTION_WEATHER -> setWeather(player);
             default -> {
             }
         }
@@ -133,6 +143,27 @@ public record QuickActionPacket(int action, ResourceLocation dimension,
     private void setTime(ServerPlayer player) {
         player.serverLevel().setDayTime(time);
         feedback(player, "§a时间已设置为 " + time);
+    }
+
+    /**
+     * 直接改写当前维度的天气，时长按原版 {@code /weather} 的默认区间随机。
+     *
+     * <p>刻意不走 {@code /weather} 命令，而是直接调用 {@code ServerLevel#setWeatherParameters}：
+     * 整合包里 EclipticSeasons 会拦截该命令的雷雨分支（详见 WeatherCommandMixin），
+     * 面板要求「点一下就必须生效」，因此绕开命令层直接写世界天气。</p>
+     */
+    private void setWeather(ServerPlayer player) {
+        ServerLevel level = player.serverLevel();
+        if (time == WEATHER_CLEAR) {
+            level.setWeatherParameters(ServerLevel.RAIN_DELAY.sample(level.getRandom()), 0, false, false);
+            feedback(player, "§a天气已设为晴天");
+        } else if (time == WEATHER_RAIN) {
+            level.setWeatherParameters(0, ServerLevel.RAIN_DURATION.sample(level.getRandom()), true, false);
+            feedback(player, "§a天气已设为下雨");
+        } else if (time == WEATHER_THUNDER) {
+            level.setWeatherParameters(0, ServerLevel.THUNDER_DURATION.sample(level.getRandom()), true, true);
+            feedback(player, "§a天气已设为雷雨");
+        }
     }
 
     private static void feedback(ServerPlayer player, String text) {

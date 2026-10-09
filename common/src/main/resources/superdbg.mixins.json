@@ -28,6 +28,7 @@
         "ServerLevelAccessor",
         "ServerLevelMixin",
         "ThrownPotionMixin",
+        "ServerPlayerMixin",
         "PlayerTickOverrideMixin",
         "RangedAttributeAccessor",
         "MobTraitCapAccessor",
@@ -45,9 +46,17 @@
         "TmaRandomGiftMixin",
         "PseudoCreativeDamageMixin",
         "PseudoCreativeHealMixin",
-        "FoodDataTickMixin"
+        "FoodDataTickMixin",
+        "CommandsMixin",
+        "ComponentArgumentMixin",
+        "EntityArgumentMixin",
+        "WeatherCommandMixin"
     ],
     "client": [
+        "AbstractCommandBlockEditScreenMixin",
+        "CommandSuggestionsMixin",
+        "EditBoxAccessor",
+        "MultilineTextFieldMixin",
         "ClientPacketListenerMixin",
         "JadeStatusEffectsProviderMixin",
         "JadeEntityNameMixin",

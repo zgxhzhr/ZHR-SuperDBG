@@ -26,14 +26,15 @@ import java.util.List;
  *       玩家没去过也能选），可指定坐标；</li>
  *   <li>清除当前维度全部已加载非玩家生物（走正常死亡流程）；</li>
  *   <li>杀死全部玩家（含自己）；</li>
- *   <li>快速调时间：清晨/正午/黄昏/午夜 + 自定义 tick。</li>
+ *   <li>快速调时间：清晨/正午/黄昏/午夜 + 自定义 tick；</li>
+ *   <li>快速调天气：晴天/下雨/雷雨（直接改写世界天气，绕开会拦截雷雨的第三方模组）。</li>
  * </ul>
  * 纯客户端界面，所有动作经 {@link QuickActionPacket} 由服务端执行并复检创造模式。
  */
 public final class QuickActionScreen extends Screen {
 
     private static final int PANEL_W = 260;
-    private static final int PANEL_H = 236;
+    private static final int PANEL_H = 288;
 
     /** 服务端最近一次下发的全量维度列表（全客户端共享缓存，可能为 null=尚未收到） */
     private static List<ResourceLocation> serverDimensions;
@@ -111,6 +112,12 @@ public final class QuickActionScreen extends Screen {
             }
         }).bounds(left + 132, y, 118, 18).build());
 
+        // ---- 天气 ----
+        y = top + 238;
+        addWeatherButton(left + 10, y, 76, "晴天", QuickActionPacket.WEATHER_CLEAR);
+        addWeatherButton(left + 92, y, 76, "下雨", QuickActionPacket.WEATHER_RAIN);
+        addWeatherButton(left + 174, y, 76, "雷雨", QuickActionPacket.WEATHER_THUNDER);
+
         // ---- 关闭 ----
         addRenderableWidget(Button.builder(Component.literal("关闭"), b -> onClose())
                 .bounds(left + 100, top + PANEL_H - 24, 60, 18).build());
@@ -167,6 +174,15 @@ public final class QuickActionScreen extends Screen {
         addRenderableWidget(Button.builder(Component.literal(label),
                         b -> NetworkHandler.CHANNEL.sendToServer(new QuickActionPacket(
                                 QuickActionPacket.ACTION_TIME, null, 0, 0, 0, time)))
+                .bounds(x, y, w, 18).build());
+    }
+
+    /** 天气按钮与时间按钮同构，只是动作换成 {@link QuickActionPacket#ACTION_WEATHER}，
+     *  {@code time} 字段此时承载天气种类。 */
+    private void addWeatherButton(int x, int y, int w, String label, int weather) {
+        addRenderableWidget(Button.builder(Component.literal(label),
+                        b -> NetworkHandler.CHANNEL.sendToServer(new QuickActionPacket(
+                                QuickActionPacket.ACTION_WEATHER, null, 0, 0, 0, weather)))
                 .bounds(x, y, w, 18).build());
     }
 
@@ -268,6 +284,9 @@ public final class QuickActionScreen extends Screen {
         graphics.fill(left + 2, top + 158, left + PANEL_W - 2, top + 159, 0xFF999999);
         graphics.drawString(font, Component.literal("时间（tick：清晨1000 / 正午6000 / 黄昏12000 / 午夜18000）"),
                 left + 10, top + 162, 0x404040, false);
+
+        graphics.fill(left + 2, top + 222, left + PANEL_W - 2, top + 223, 0xFF999999);
+        graphics.drawString(font, Component.literal("天气"), left + 10, top + 226, 0x404040, false);
     }
 
     @Override

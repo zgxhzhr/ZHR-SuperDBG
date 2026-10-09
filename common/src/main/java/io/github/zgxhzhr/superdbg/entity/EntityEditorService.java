@@ -128,13 +128,14 @@ public final class EntityEditorService {
      * 权限规则（纯函数，便于测试）：
      * <ul>
      *   <li>编辑自己：始终允许</li>
-     *   <li>目标是有管理权限（&ge;2 级）的玩家：只有本人能调（其他玩家包括其他 OP 一律拒绝）</li>
+     *   <li>目标是有管理权限（&ge;2 级）的玩家：仅服务器所有者（4 级，编辑者 &ge;4）可打开；
+     *       普通 OP 之间不能互相打开，非 OP 更不行</li>
      *   <li>目标是普通玩家：仅 OP（&ge;2 级）编辑者</li>
      *   <li>目标是非玩家生物：任何创造模式编辑者</li>
      * </ul>
      *
      * @param editorCreative 编辑者是否创造模式
-     * @param editorPerm     编辑者权限等级（0-4）
+     * @param editorPerm     编辑者权限等级（0/2/4）
      * @param isSelf         目标是否编辑者本人
      * @param targetIsPlayer 目标是否玩家
      * @param targetPerm     目标权限等级（非玩家传 0）
@@ -145,8 +146,8 @@ public final class EntityEditorService {
             return true;
         }
         if (targetIsPlayer) {
-            if (targetPerm >= 2) {
-                return false;
+            if (targetPerm >= 2 && editorPerm < 4) {
+                return false; // 目标是 OP：OP 之间不能互相打开，只有服务器所有者能打开
             }
             return editorPerm >= 2;
         }
@@ -159,9 +160,14 @@ public final class EntityEditorService {
     public static boolean canEdit(LivingEntity target, Player editor) {
         boolean isSelf = target == editor;
         boolean targetIsPlayer = target instanceof Player;
-        int targetPerm = targetIsPlayer ? ((Player) target).hasPermissions(2) ? 2 : 0 : 0;
-        int editorPerm = editor.hasPermissions(2) ? 2 : 0;
+        int targetPerm = targetIsPlayer ? permissionLevel((Player) target) : 0;
+        int editorPerm = permissionLevel(editor);
         return canEdit(editor.isCreative(), editorPerm, isSelf, targetIsPlayer, targetPerm);
+    }
+
+    /** 权限等级归一化：4＝服务器所有者，2＝OP，0＝普通玩家。 */
+    private static int permissionLevel(Player player) {
+        return player.hasPermissions(4) ? 4 : player.hasPermissions(2) ? 2 : 0;
     }
 
     /**
@@ -210,10 +216,11 @@ public final class EntityEditorService {
             instance.setBaseValue(attribute.sanitizeValue(e.getValue() == null ? 0.0D : e.getValue()));
         }
 
-        // 修改最大生命后，把当前血量钳到新上限内
+        // 修改最大生命后，把当前血量钳到新上限内（调试器写入：绕过守卫并同步血量基准）
         AttributeInstance maxHealth = target.getAttributes().getInstance(Attributes.MAX_HEALTH);
         if (maxHealth != null && target.getHealth() > maxHealth.getValue()) {
-            target.setHealth((float) maxHealth.getValue());
+            final float clampedToMax = (float) maxHealth.getValue();
+            RemovalGuard.runWithoutGuard(() -> target.setHealth(clampedToMax));
         }
 
         // ---- 当前血量（用户显式编辑）----
@@ -225,7 +232,9 @@ public final class EntityEditorService {
             } else {
                 clamped = Math.max(0.0F, Math.min((float) maxHealth.getValue(), health));
             }
-            target.setHealth(clamped);
+            // 调试器写入：绕过守卫并同步血量基准（否则下一 tick 会被当作非法降血回滚）
+            final float clampedValue = clamped;
+            RemovalGuard.runWithoutGuard(() -> target.setHealth(clampedValue));
 
             // 血量设为 0：用户意图是让实体死亡。
             // 包在 runWithoutGuard 下让守卫实体的 guardDie 不拦截（DYING 标记同时放行 takeOverDie），

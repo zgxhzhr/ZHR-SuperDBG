@@ -568,7 +568,7 @@ public class SuperDebuggerGameTests {
 
     /**
      * 权限矩阵（纯函数）：
-     * 自己始终可调；OP 只能被本人调；普通玩家仅 OP 可调；生物任何创造玩家可调。
+     * 自己始终可调；OP 只能被服务器所有者调；普通玩家仅 OP 可调；生物任何创造玩家可调。
      */
     @GameTest(template = "empty")
     public void entityEditorPermissionMatrix(GameTestHelper helper) {
@@ -576,12 +576,15 @@ public class SuperDebuggerGameTests {
         helper.assertTrue(EntityEditorService.canEdit(true, 0, true, true, 4), "自己（无权限）可调");
         helper.assertTrue(EntityEditorService.canEdit(false, 0, true, true, 4), "自己（非创造）可调");
 
-        // 目标是 OP（>=2 级）玩家：只有本人能调，其他玩家包括其他 OP 一律拒绝
-        helper.assertTrue(!EntityEditorService.canEdit(true, 4, false, true, 4), "其他 OP 不能调 OP");
+        // 目标是 OP（>=2 级）玩家：只有服务器所有者（4 级）能打开；OP 之间不能互相打开
+        helper.assertTrue(EntityEditorService.canEdit(true, 4, false, true, 2), "服务器所有者可调 OP");
+        helper.assertTrue(EntityEditorService.canEdit(true, 4, false, true, 4), "服务器所有者可调另一所有者");
+        helper.assertTrue(!EntityEditorService.canEdit(true, 2, false, true, 2), "OP 不能调 OP");
         helper.assertTrue(!EntityEditorService.canEdit(true, 0, false, true, 2), "普通创造玩家不能调 OP");
 
         // 目标是普通玩家：仅 OP 编辑者
         helper.assertTrue(EntityEditorService.canEdit(true, 2, false, true, 0), "OP 可调普通玩家");
+        helper.assertTrue(EntityEditorService.canEdit(true, 4, false, true, 0), "服务器所有者可调普通玩家");
         helper.assertTrue(!EntityEditorService.canEdit(true, 0, false, true, 0), "非 OP 不能调普通玩家");
 
         // 目标是非玩家生物：任何创造玩家可调，非创造不可

@@ -125,9 +125,11 @@ public abstract class LivingEntityMixin {
     }
 
     /**
-     * 守卫实体的伤害防护（泛用，所有包生效）：genericKill/虚空免疫 + 秒杀伤害免疫
-     * （单次伤害 > 最大生命 2 倍 → 0 伤害；一般高伤害限幅最大生命 15%）。
-     * 事件式，不干预守卫实体的日常 AI/动画/移动。
+     * 守卫实体的伤害防护（泛用，所有包生效）：完全免疫一切伤害。
+     * <p>
+     * 开启防移除的实体不允许收到任何伤害——包括普通战斗伤害。直接返回 false，
+     * 不进入受击/击退/无敌帧/扣血任何流程，因此也不会有减血、死亡或异常状态结算。
+     * 调试器主动处置（编辑器伤害测试、强制移除）走 BYPASS/DYING 旁路，不受影响。
      */
     @Inject(method = "hurt(Lnet/minecraft/world/damagesource/DamageSource;F)Z",
             at = @At("HEAD"), cancellable = true)
@@ -137,37 +139,46 @@ public abstract class LivingEntityMixin {
         if (self.level().isClientSide) {
             return;
         }
-        if (!RemovalGuard.has(self) || RemovalGuard.isBypassing()) {
+        if (!RemovalGuard.has(self) || RemovalGuard.isBypassing()
+                || Boolean.TRUE.equals(RemovalGuard.DYING.get())) {
             return;
         }
-        if (source.is(net.minecraft.world.damagesource.DamageTypes.GENERIC_KILL)
-                || source.is(net.minecraft.world.damagesource.DamageTypes.FELL_OUT_OF_WORLD)) {
-            cir.setReturnValue(false);
-            RemovalGuard.logIntercepted(self, "用 genericKill/虚空伤害清除", RemovalGuard.findIllegalCaller());
-            return;
-        }
-        float hp = self.getHealth();
-        float maxHp = self.getMaxHealth();
-        if (maxHp > 0.0F && amount > maxHp) {
-            if (amount > maxHp * 2.0F) {
-                // 秒杀级伤害（清除工具恒定 21 亿，恒大于上限 2 倍）：完全免疫，打不动
-                cir.setReturnValue(false);
-                RemovalGuard.logIntercepted(self, "秒杀级伤害攻击（伤害值=" + amount + "）", RemovalGuard.findIllegalCaller());
-            } else {
-                // 一般高伤害（不超过上限 2 倍，如玩家暴击）：限幅为最大生命 15%，可被磨死
-                float actual = maxHp * 0.15F;
-                float newHp = Math.max(1.0F, hp - actual);
-                // 内部写血绕过守卫（否则栈帧含外部攻击者时会被 guardSetHealth 误拦）
-                RemovalGuard.runWithoutGuard(() -> self.setHealth(newHp));
-                cir.setReturnValue(true);
-            }
+        RemovalGuard.markProtected(self);
+        cir.setReturnValue(false);
+        RemovalGuard.logInterceptedThrottled(self,
+                "免疫伤害（来源=" + source.getMsgId() + "，伤害值=" + amount + "）",
+                RemovalGuard.findIllegalCaller());
+    }
+
+    /**
+     * 守卫实体的实际扣血层防护（泛用，所有包生效）。
+     * <p>
+     * {@code actuallyHurt} 是所有"真正生效的伤害"的唯一必经入口。部分模组
+     * （含个别覆写 hurt 的 Boss 与 GoetyRevelation 的尾杀实现）直接调用
+     * actuallyHurt 绕过 {@code hurt}，只守 hurt 会漏掉这些路径。
+     * 此处独立设防：守卫实体一律免疫（见 {@link RemovalGuard#blockActuallyHurt}）。
+     * <p>
+     * 注意：{@code Player.actuallyHurt} 覆写且不调用 super，玩家的守卫在
+     * {@link PlayerTickOverrideMixin} 中单独挂载，二者互不重叠、不会重复计数。
+     */
+    @Inject(method = "actuallyHurt(Lnet/minecraft/world/damagesource/DamageSource;F)V",
+            at = @At("HEAD"), cancellable = true)
+    private void superdbg$guardActuallyHurt(net.minecraft.world.damagesource.DamageSource source,
+                                            float amount, CallbackInfo ci) {
+        LivingEntity self = (LivingEntity) (Object) this;
+        if (RemovalGuard.blockActuallyHurt(self, source, amount)) {
+            ci.cancel();
         }
     }
 
     /**
-     * 守卫实体的死亡保护：被"强行召唤死亡"（清除物品的 Run die() method，
-     * 血量尚未归零时直接调 die）→ 取消，不扣血不进死亡流程。
-     * 正常伤害死亡（血量 ≤0 后）走原版流程（DYING 放行清理）。
+     * 守卫实体的死亡保护：一律取消死亡。
+     * <p>
+     * 开启防移除的实体不允许死亡：无论血量是否归零、无论调用栈是否可信，一律取消 die()，
+     * 并在血量低于基准时恢复到基准值，避免停留在"血量归零却未死亡"的不一致状态。
+     * 调试器主动处置（编辑器移除、强制移除补刀）走 BYPASS/DYING 旁路放行。
+     * 玩家不走 {@code LivingEntity.die}（{@code ServerPlayer} 覆写了 die 且不调用 super），
+     * 由 {@link ServerPlayerMixin} 单独兜。
      */
     @Inject(method = "die(Lnet/minecraft/world/damagesource/DamageSource;)V", at = @At("HEAD"), cancellable = true)
     private void superdbg$guardDie(DamageSource source, CallbackInfo ci) {
@@ -175,29 +186,23 @@ public abstract class LivingEntityMixin {
         if (self.level().isClientSide) {
             return;
         }
-        if (!RemovalGuard.has(self) || RemovalGuard.isBypassing()) {
+        if (!RemovalGuard.has(self) || RemovalGuard.isBypassing()
+                || Boolean.TRUE.equals(RemovalGuard.DYING.get())) {
             return;
         }
-        if (self.getHealth() > 0.0F) {
-            ci.cancel(); // 异常伪死亡，取消
-            RemovalGuard.logIntercepted(self,
-                    "强行召死 die()（血量未归零 hp=" + self.getHealth() + "）", RemovalGuard.findIllegalCaller());
-            return;
-        }
-        // 血量为 0 也可能是清除工具先 setHealth(0) 再 die() 伪装的"正常死亡"：
-        // 原版死亡 die() 由 hurt() 内部调用，栈帧全白名单；栈帧含外部模组类 → 拦截
-        String caller = RemovalGuard.findIllegalCaller();
-        if (caller != null) {
-            ci.cancel();
-            RemovalGuard.logIntercepted(self,
-                    "调 die() 伪装死亡（hp=" + self.getHealth() + "）", caller);
-        }
+        ci.cancel();
+        RemovalGuard.restoreHealthBaseline(self);
+        RemovalGuard.logInterceptedThrottled(self,
+                "死亡被拦截（hp=" + self.getHealth() + "）", RemovalGuard.findIllegalCaller());
     }
 
     /**
-     * 防移除：拦截外部模组直接压低守卫实体血量（清除工具 setHealth(0) 伪装死亡的绕过手法）。
-     * 原版 hurt 流程内部调 setHealth，栈帧全白名单 → 放行；外部模组直接调用 → 取消。
-     * 只拦"压低"，回血/再生放行。
+     * 防移除：拦截一切降低守卫实体血量的写入（除调试器设置外）。
+     * <p>
+     * 原版 hurt 流程内部的减血也会被本层拦下——但伤害入口已被 hurt/actuallyHurt 层
+     * 完全免疫，正常路径根本走不到这里；本层主要用于挡下外部模组直接调 setHealth(0)
+     * 伪装死亡的绕过手法。调试器自身的写血在 BYPASS/DYING 下放行，
+     * 并把血量基准同步到新值，避免下一 tick 被判定为非法降血回滚。
      */
     @Inject(method = "setHealth(F)V", at = @At("HEAD"), cancellable = true)
     private void superdbg$guardSetHealth(float health, CallbackInfo ci) {
@@ -205,21 +210,56 @@ public abstract class LivingEntityMixin {
         if (self.level().isClientSide) {
             return;
         }
-        if (!RemovalGuard.has(self) || RemovalGuard.isBypassing()) {
+        if (!RemovalGuard.has(self)) {
             return;
         }
-        if (Boolean.TRUE.equals(RemovalGuard.DYING.get())) {
-            return; // 死亡流程内部的血量归零放行
+        if (RemovalGuard.isBypassing() || Boolean.TRUE.equals(RemovalGuard.DYING.get())) {
+            // 调试器主动写血：放行，并把基准同步到新值
+            RemovalGuard.syncHealthBaseline(self, health);
+            return;
         }
         if (health >= self.getHealth()) {
             return; // 回血/不变放行
         }
-        String caller = RemovalGuard.findIllegalCaller();
-        if (caller != null) {
-            ci.cancel();
-            RemovalGuard.logIntercepted(self,
-                    "压低血量（" + self.getHealth() + " → " + health + "）", caller);
+        RemovalGuard.markProtected(self);
+        ci.cancel();
+        // 同一实体高频拉锯时日志限流（真正生效的是 tick 级血量回滚）
+        RemovalGuard.logInterceptedThrottled(self,
+                "压低血量（" + self.getHealth() + " → " + health + "）",
+                RemovalGuard.findIllegalCaller());
+    }
+
+    /**
+     * 血量同步数据写入后的即时拉回（禁止降血）。
+     * <p>
+     * 少数实现用 MethodHandle/VarHandle 直接改写血量 DataItem 的 value 字段，
+     * 绕过 setHealth 与 SynchedEntityData.set 的一切守卫，但写入后仍会调用
+     * {@code Entity#onSyncedDataUpdated(accessor)}（原版写入路径同样会调用）。
+     * 在该回调里核对：只要血量低于基准（且不是调试器设置的降血）就立即改回基准。
+     * （完全绕过同步写入路径的实现由 {@link #superdbg$guardHealthRollback} 兜底。）
+     */
+    @Inject(method = "onSyncedDataUpdated(Lnet/minecraft/network/syncher/EntityDataAccessor;)V",
+            at = @At("HEAD"))
+    private void superdbg$rescueOnHealthWrite(EntityDataAccessor<?> accessor, CallbackInfo ci) {
+        if (accessor != DATA_HEALTH_ID) {
+            return;
         }
+        RemovalGuard.enforceHealthFloor((LivingEntity) (Object) this);
+    }
+
+    /**
+     * 血量回滚守卫（每 tick，禁止降血主入口）。
+     * <p>
+     * 少数实现（如 GoetyRevelation 的尾杀）用 MethodHandle/VarHandle 直接改写血量
+     * DataItem 的 value 字段，既绕过 {@code setHealth}，也不经过
+     * {@code SynchedEntityData.set}（因此不触发 {@link #superdbg$rescueOnHealthWrite}）。
+     * 这里以"上一刻血量"为基准做 tick 级核对：任何下降一律回滚到基准值
+     * （只有调试器植入的伤害会被登记并保留），使守卫实体（含玩家，玩家 tick 会调用本方法）
+     * 不会被任何外部来源降血或杀死。
+     */
+    @Inject(method = "tick()V", at = @At("TAIL"))
+    private void superdbg$guardHealthRollback(CallbackInfo ci) {
+        RemovalGuard.guardTick((LivingEntity) (Object) this);
     }
 
     /**

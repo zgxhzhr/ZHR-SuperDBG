@@ -75,9 +75,11 @@ public final class PlayerAttributeOverrides {
         }
 
         // 提高/降低最大生命后，把当前血量钳到新上限内（提高时不主动回血）
+        // 调试器写入：绕过守卫并同步血量基准（否则下一 tick 会被当作非法降血回滚）
         AttributeInstance maxHealth = player.getAttributes().getInstance(Attributes.MAX_HEALTH);
         if (maxHealth != null && player.getHealth() > maxHealth.getValue()) {
-            player.setHealth((float) maxHealth.getValue());
+            final float clampedToMax = (float) maxHealth.getValue();
+            RemovalGuard.runWithoutGuard(() -> player.setHealth(clampedToMax));
         }
     }
 

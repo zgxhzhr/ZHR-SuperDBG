@@ -3,6 +3,7 @@ package io.github.zgxhzhr.superdbg.entity;
 import java.lang.reflect.Field;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.syncher.EntityDataAccessor;
+import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 
@@ -244,6 +245,9 @@ public final class RemovalGuard {
         // 3. 按 UUID 索引的状态：UUID 可能在新世界重用，一律清掉
         LAST_KNOWN.clear();
         LAST_TICK_COUNT.clear();
+        HP_SNAPSHOT.clear();
+        ALLOWED_HURT_TICK.clear();
+        ALLOWED_HURT_SUM.clear();
         DISMISSED_UUIDS.clear();
         FINISHED_UUIDS.clear();
         FORCE_REMOVE.clear();
@@ -368,6 +372,13 @@ public final class RemovalGuard {
         if (living.isDeadOrDying() && living.deathTime > 0) {
             return false;
         }
+        // 刚被判定非法降血/被攻击免疫（保底窗口内）：任何移除都视为异常。
+        // 这类攻击的步骤是"先绕过伤害系统压血或硬打、再走原版流程摘除实体"，
+        // 移除调用栈可能是全白名单的原版栈，靠调用栈判别会漏放；用"实体刚被异常动过血量"
+        // 这一事实兜住。白名单流程（收魂收容、区块卸载、死亡收尾）已在前面放行，不受影响。
+        if (isProtected(living)) {
+            return true;
+        }
         // 其余 DISCARDED 等：一律看调用栈白名单
         return findIllegalCaller() != null;
     }
@@ -439,6 +450,11 @@ public final class RemovalGuard {
             releaseChunkTicket(e.getUUID());
             LAST_KNOWN.remove(e.getUUID());
             LAST_TICK_COUNT.remove(e.getUUID());
+            PROTECT_UNTIL.remove(e.getUUID());
+            ALLOWED_HURT_TICK.remove(e.getUUID());
+            ALLOWED_HURT_SUM.remove(e.getUUID());
+            HP_SNAPSHOT.remove(e.getUUID());
+            LAST_FLOOR_LOG_TICK.remove(e.getUUID());
         }
     }
 
@@ -505,6 +521,271 @@ public final class RemovalGuard {
     /** 上次慢扫时的 tickCount：检测"区块在 tick 但实体被冻结"（区块归属被反射破坏） */
     private static final java.util.Map<java.util.UUID, Integer> LAST_TICK_COUNT =
             new java.util.concurrent.ConcurrentHashMap<>();
+
+    // ---- 异常伤害守卫（防移除）----
+    // 守卫实体不允许受到任何伤害，两层各设一道，缺一不可：
+    //   · hurt()：语义层——一律返回 false，不触发受击/击退/无敌帧等任何副作用；
+    //   · actuallyHurt()：实际扣血层——所有真正生效的伤害都必经此。部分模组（含个别 Boss
+    //             与 GoetyRevelation 的尾杀实现）直接调 actuallyHurt 绕过 hurt，只守 hurt
+    //             会漏掉这些路径。
+    // 只有调试器主动植入的伤害（BYPASS 下）会被放行，并登记额度供血量回滚排除。
+
+    // ---- 绕过伤害系统的直接压血防护（禁止降血）----
+    // 背景：少数实现（如 GoetyRevelation 的尾杀）既不调用 hurt/actuallyHurt，也不完全
+    // 依赖 setHealth，而是用 MethodHandle/VarHandle 直接改写 SynchedEntityData 中血量
+    // DataItem 的 value 字段（见 com.mega.revelationfix.util.entity.EntityActuallyHurt
+    // .catchSetTrueHealth）。任何"在写入方法里取消"的守卫都拦不住它——写入后它还会调用
+    // Entity#onSyncedDataUpdated(accessor)，而原版写入路径同样会调用该回调。故在该回调
+    // 做"血量拉回"：只要血量低于上一刻基准就立即改回基准，使其压血无效。
+    // 判据是"血量是否被降低"本身，与调用栈、模组身份、伤害类型完全无关：
+    // 只要不是本模组（调试器）设置的降血，一律视为非法，一律回滚。
+
+    /**
+     * 血量保底窗口时长：命中一次异常降血后，该时长内实体被任何方移除都视为异常
+     * （每次异常刷新）。与降血拦截共用，见 {@link #markProtected}。
+     */
+    private static final long PROTECT_WINDOW_MS = 3000L;
+
+    /** 各守卫实体"血量保底"截止时间戳（毫秒）。 */
+    private static final java.util.Map<java.util.UUID, Long> PROTECT_UNTIL =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 各守卫实体在当前游戏刻内"被放行的伤害总量"（只有调试器植入的伤害会登记）。 */
+    private static final java.util.Map<java.util.UUID, Float> ALLOWED_HURT_SUM =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 各守卫实体最近一次"被放行伤害"所在的游戏刻。 */
+    private static final java.util.Map<java.util.UUID, Integer> ALLOWED_HURT_TICK =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 各守卫实体上一游戏刻结束时的血量快照（tick 级血量回滚的基准值）。 */
+    private static final java.util.Map<java.util.UUID, Float> HP_SNAPSHOT =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 各守卫实体最近一次拦截审计日志所在的游戏刻（日志限流用）。 */
+    private static final java.util.Map<java.util.UUID, Integer> LAST_FLOOR_LOG_TICK =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 血量下降的可忽略误差（浮点比较用）。 */
+    private static final float HEALTH_EPSILON = 1.0E-4F;
+
+    /** 审计日志的限流间隔（游戏刻）：同一实体每经过该刻数最多打印一条。 */
+    private static final int FLOOR_LOG_INTERVAL_TICKS = 100;
+
+    /** 激活/刷新某守卫实体的血量保底窗口。 */
+    public static void markProtected(LivingEntity entity) {
+        if (entity != null) {
+            PROTECT_UNTIL.put(entity.getUUID(), System.currentTimeMillis() + PROTECT_WINDOW_MS);
+        }
+    }
+
+    /** 该守卫实体当前是否处于血量保底窗口内。 */
+    public static boolean isProtected(LivingEntity entity) {
+        if (entity == null) {
+            return false;
+        }
+        Long until = PROTECT_UNTIL.get(entity.getUUID());
+        return until != null && System.currentTimeMillis() < until;
+    }
+
+    /**
+     * 纯函数：本刻血量相对上一刻基准是否发生"非法下降"（守卫实体不允许任何降血）。
+     * 只需可忽略的浮点误差容差；回血与持平都视为合法。
+     */
+    static boolean isIllegalHealthDrop(float before, float now) {
+        return before - now > HEALTH_EPSILON;
+    }
+
+    /**
+     * 登记一次"被调试器放行的伤害"（仅 {@code BYPASS} 下的伤害会调用），
+     * 供 tick 级血量回滚把调试器植入的扣血（如测试用的"造成伤害"）排除在回滚之外。
+     * 同一游戏刻内的多次结算累加。
+     */
+    public static void noteAllowedHurt(LivingEntity entity, float amount) {
+        if (entity == null) {
+            return;
+        }
+        java.util.UUID id = entity.getUUID();
+        int tick = entity.tickCount;
+        Integer prevTick = ALLOWED_HURT_TICK.get(id);
+        if (prevTick != null && prevTick == tick) {
+            ALLOWED_HURT_SUM.merge(id, amount, Float::sum);
+        } else {
+            ALLOWED_HURT_TICK.put(id, tick);
+            ALLOWED_HURT_SUM.put(id, amount);
+        }
+    }
+
+    /** 本游戏刻内该实体"被放行的伤害"累计值；不是本刻登记则返回 0。 */
+    private static float allowedDamageThisTick(LivingEntity entity) {
+        Integer tick = ALLOWED_HURT_TICK.get(entity.getUUID());
+        if (tick == null || tick != entity.tickCount) {
+            return 0.0F;
+        }
+        Float sum = ALLOWED_HURT_SUM.get(entity.getUUID());
+        return sum == null ? 0.0F : sum;
+    }
+
+    /**
+     * 每 tick 的血量回滚守卫（禁止降血主入口）。
+     * <p>
+     * 以"上一游戏刻结束时的血量"为基准，比较本刻结束时的血量：
+     * <ul>
+     *   <li>没有掉血（含回血）→ 放行，并把基准刷新为本刻值；</li>
+     *   <li>掉血量可由本刻"被放行的伤害"解释 → 放行（仅调试器植入的伤害会登记）；</li>
+     *   <li>其余任何掉血 → 判为非法降血，把血量<strong>回滚</strong>到基准值
+     *       （保留被放行的伤害额度）。</li>
+     * </ul>
+     * 该判定与调用栈、模组身份、伤害类型无关，任何绕过 {@code hurt}/{@code actuallyHurt}
+     * 的掉血都拦得住。
+     */
+    public static void guardTick(LivingEntity entity) {
+        if (entity == null || entity.level() == null || entity.level().isClientSide) {
+            return;
+        }
+        // 快速过滤：非守卫实体直接跳过（不做任何分配与数据读取）
+        if (!SNAPSHOTS.containsKey(entity.getUUID())) {
+            return;
+        }
+        if (!has(entity) || isBypassing() || Boolean.TRUE.equals(DYING.get())) {
+            return;
+        }
+        java.util.UUID id = entity.getUUID();
+        float now = entity.getHealth();
+        Float before = HP_SNAPSHOT.get(id);
+        if (before == null) {
+            HP_SNAPSHOT.put(id, now); // 首次观测，本刻只建立基准
+            return;
+        }
+        float drop = before - now;
+        if (drop <= HEALTH_EPSILON) {
+            HP_SNAPSHOT.put(id, now); // 未掉血（含回血）：正常，刷新基准
+            return;
+        }
+        float allowed = allowedDamageThisTick(entity);
+        if (drop <= allowed + HEALTH_EPSILON) {
+            HP_SNAPSHOT.put(id, now); // 掉血可由本刻被放行的伤害解释：放行
+            return;
+        }
+        float floor = Math.max(before - allowed, 0.0F);
+        markProtected(entity);
+        logInterceptedThrottled(entity,
+                "非法降血（" + before + " → " + now + "），已回滚至 " + floor,
+                findIllegalCaller());
+        final float value = floor;
+        runWithoutGuard(() -> entity.setHealth(value));
+        HP_SNAPSHOT.put(id, floor);
+    }
+
+    /**
+     * 审计日志限流入口：同一守卫实体的同类拦截日志每 {@link #FLOOR_LOG_INTERVAL_TICKS} 刻
+     * 最多打印一条（首次必打）。用于高频拉锯（同一 tick 内被反复压血/反复回滚）时避免刷爆日志。
+     */
+    public static void logInterceptedThrottled(LivingEntity entity, String op, String caller) {
+        if (entity == null) {
+            return;
+        }
+        java.util.UUID id = entity.getUUID();
+        Integer lastLog = LAST_FLOOR_LOG_TICK.get(id);
+        if (lastLog == null || entity.tickCount - lastLog >= FLOOR_LOG_INTERVAL_TICKS) {
+            LAST_FLOOR_LOG_TICK.put(id, entity.tickCount);
+            logIntercepted(entity, op, caller);
+        }
+    }
+
+    /**
+     * 把该守卫实体的血量基准同步为当前实际血量。
+     * <p>
+     * 调试器主动写血（编辑器设置当前血量/修改最大生命后的钳制、强制移除补刀等）之后调用：
+     * 这些写入属于合法操作，必须成为新的回滚基准，否则下一次 tick 核对时会被当作
+     * "非法降血"回滚，导致调试器设置的血量无法生效。
+     */
+    public static void syncHealthBaseline(LivingEntity entity) {
+        if (entity != null) {
+            HP_SNAPSHOT.put(entity.getUUID(), entity.getHealth());
+        }
+    }
+
+    /** 把该守卫实体的血量基准同步为指定值（用于 HEAD 注入时新血量尚未生效的场景）。 */
+    public static void syncHealthBaseline(LivingEntity entity, float health) {
+        if (entity != null) {
+            HP_SNAPSHOT.put(entity.getUUID(), health);
+        }
+    }
+
+    /**
+     * 把该守卫实体的血量恢复到 {@link #HP_SNAPSHOT} 记录的基准值。
+     * <p>
+     * die() 层守卫取消死亡后调用：避免实体停留在"血量已归零却未死亡"的不一致状态
+     * （玩家会因此卡在死亡界面并反复进入死亡流程）。
+     *
+     * @return 是否实际执行了恢复
+     */
+    public static boolean restoreHealthBaseline(LivingEntity entity) {
+        if (entity == null || entity.level() == null || entity.level().isClientSide || !has(entity)) {
+            return false;
+        }
+        Float before = HP_SNAPSHOT.get(entity.getUUID());
+        if (before == null || before <= 0.0F || !isIllegalHealthDrop(before, entity.getHealth())) {
+            return false;
+        }
+        final float value = before;
+        runWithoutGuard(() -> entity.setHealth(value));
+        return true;
+    }
+
+    /**
+     * 血量同步数据写入后的即时拉回（绕过伤害系统的直接压血防护）。
+     * <p>
+     * 少数实现用 MethodHandle/VarHandle 直接改写血量 DataItem 的 value 字段，绕过
+     * setHealth 与 SynchedEntityData.set 的一切守卫，但写入后仍会调用
+     * {@code Entity#onSyncedDataUpdated(accessor)}（原版写入路径同样会调用）。
+     * 在该回调里核对血量：低于基准且不是调试器设置的降血即立即改回基准。
+     *
+     * @see #guardTick 每 tick 的兜底核对（覆盖完全绕过同步写入路径的实现）
+     */
+    public static void enforceHealthFloor(LivingEntity entity) {
+        if (entity == null || entity.level() == null || entity.level().isClientSide) {
+            return;
+        }
+        if (!has(entity) || isBypassing() || Boolean.TRUE.equals(DYING.get())) {
+            return;
+        }
+        Float before = HP_SNAPSHOT.get(entity.getUUID());
+        if (before == null || !isIllegalHealthDrop(before, entity.getHealth())) {
+            return;
+        }
+        markProtected(entity);
+        logInterceptedThrottled(entity,
+                "非法降血（" + before + " → " + entity.getHealth() + "），已拉回至 " + before,
+                findIllegalCaller());
+        final float value = before;
+        runWithoutGuard(() -> entity.setHealth(value));
+    }
+
+    /**
+     * actuallyHurt 入口守卫：守卫实体一律免疫（返回 true，由调用方取消本次伤害）。
+     * <p>
+     * 一切真正生效的伤害都必经 {@code actuallyHurt}，此处直接取消即实现"不允许收到任何伤害"。
+     * 调试器植入的伤害（如编辑器的伤害测试）由 {@code BYPASS} 放行并登记额度。
+     * 非玩家实体走 {@code LivingEntity.actuallyHurt}，玩家走 {@code Player.actuallyHurt}
+     * （其覆写不调用 super），两处均调用本方法。
+     */
+    public static boolean blockActuallyHurt(LivingEntity self, DamageSource source, float amount) {
+        if (self == null || self.level() == null || self.level().isClientSide || !has(self)) {
+            return false;
+        }
+        if (isBypassing() || Boolean.TRUE.equals(DYING.get())) {
+            // 调试器主动造成的伤害：放行并登记额度，供 tick 级回滚排除
+            noteAllowedHurt(self, amount);
+            return false;
+        }
+        String reason = source == null ? "未知来源" : source.getMsgId();
+        markProtected(self);
+        logInterceptedThrottled(self,
+                "免疫伤害（来源=" + reason + "，伤害值=" + amount + "）", findIllegalCaller());
+        return true;
+    }
 
     /**
      * 异常瞬移判定（由 Entity.setPos Mixin 在位置写入入口调用）：

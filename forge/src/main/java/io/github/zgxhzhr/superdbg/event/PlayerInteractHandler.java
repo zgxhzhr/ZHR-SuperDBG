@@ -100,13 +100,13 @@ public class PlayerInteractHandler {
             boolean guarded = target instanceof LivingEntity le && RemovalGuard.has(le);
             ResourceLocation itemKey = stack.isEmpty() ? null
                     : ForgeRegistries.ITEMS.getKey(stack.getItem());
-            io.github.zgxhzhr.superdbg.Constants.LOG.info("[SuperDbg] 收容拦截检查 side={} target={} isMaid={} has={} item={}",
-                    event.getLevel().isClientSide() ? "client" : "server",
-                    target != null ? target.getClass().getName() : "null",
-                    maid, guarded, itemKey);
+            // 仅命中「守卫女仆」时才记录：此前无条件打印导致每次交互都刷屏，拖慢低配环境
             if (target == null || !maid || !guarded) {
                 return;
             }
+            io.github.zgxhzhr.superdbg.Constants.LOG.info("[SuperDbg] 收容拦截检查 side={} target={} isMaid={} has={} item={}",
+                    event.getLevel().isClientSide() ? "client" : "server",
+                    target.getClass().getName(), maid, guarded, itemKey);
             // 守卫女仆 + TLM 物品 → 先登记当前玩家（供 Mixin discard 拦截时精确提示）
             if (itemKey != null && "touhou_little_maid".equals(itemKey.getNamespace())) {
                 String path = itemKey.getPath();
