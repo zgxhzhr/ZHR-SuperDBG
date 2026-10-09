@@ -161,5 +161,12 @@ public final class NetworkHandler {
                 SetPseudoCreativePacket::decode,
                 SetPseudoCreativePacket::handle
         );
+        CHANNEL.registerMessage(
+                id++,
+                AddPotionEffectPacket.class,
+                AddPotionEffectPacket::encode,
+                AddPotionEffectPacket::decode,
+                AddPotionEffectPacket::handle
+        );
     }
 }

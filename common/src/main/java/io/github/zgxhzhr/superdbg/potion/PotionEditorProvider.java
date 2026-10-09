@@ -1,5 +1,6 @@
 package io.github.zgxhzhr.superdbg.potion;
 
+import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.item.ItemStack;
 
 import java.util.List;
@@ -41,4 +42,15 @@ public interface PotionEditorProvider {
      * @throws IllegalArgumentException  数值越界或物品不可编辑
      */
     void writeEffect(ItemStack stack, int index, int amplifier, int duration);
+
+    /**
+     * 追加一个新的药水效果，原有全部效果保持不变。
+     *
+     * @param stack     物品堆
+     * @param effect    要添加的效果类型
+     * @param amplifier 等级（0-{@link PotionEffectData#MAX_AMPLIFIER}）
+     * @param duration  持续时长（-1 表示永久，或非负 tick 数）
+     * @throws IllegalArgumentException 数值越界或物品不可编辑
+     */
+    void addEffect(ItemStack stack, MobEffect effect, int amplifier, int duration);
 }

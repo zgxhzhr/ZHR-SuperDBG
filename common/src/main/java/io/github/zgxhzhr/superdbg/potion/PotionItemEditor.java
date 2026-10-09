@@ -1,6 +1,7 @@
 package io.github.zgxhzhr.superdbg.potion;
 
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.LingeringPotionItem;
@@ -69,8 +70,7 @@ public class PotionItemEditor implements PotionEditorProvider {
         }
 
         // 校验数值
-        PotionEffectData temp = new PotionEffectData(null, amplifier, duration, false, true, true);
-        temp.validate();
+        new PotionEffectData(null, amplifier, duration, false, true, true).validate();
 
         MobEffectInstance original = effects.get(index);
         // 保留原效果的 ambient/visible/showIcon/factorData，仅替换 amplifier 与 duration
@@ -86,11 +86,37 @@ public class PotionItemEditor implements PotionEditorProvider {
         );
         effects.set(index, updated);
 
-        // 原子写回：基础药水置空，全部效果写入自定义标签
-        // 保存原名（setPotion(EMPTY) 会把名称变成"不可合成的药水"）
+        writeAllEffects(stack, effects);
+    }
+
+    @Override
+    public void addEffect(ItemStack stack, MobEffect effect, int amplifier, int duration) {
+        if (!canEdit(stack)) {
+            throw new IllegalArgumentException("物品不可编辑：" + stack);
+        }
+        if (effect == null) {
+            throw new IllegalArgumentException("药水效果为空");
+        }
+
+        // 校验数值
+        new PotionEffectData(effect, amplifier, duration, false, true, true).validate();
+
+        // 在原有全部效果之后追加一条新效果
+        List<MobEffectInstance> effects = new ArrayList<>(PotionUtils.getMobEffects(stack));
+        effects.add(new MobEffectInstance(effect, duration, amplifier));
+
+        writeAllEffects(stack, effects);
+    }
+
+    /**
+     * 原子写回：基础药水置空，全部效果写入自定义标签。
+     * <p>
+     * 保存原显示名（{@code setPotion(EMPTY)} 会把名称变成"不可合成的药水"），
+     * 并先清除旧的 {@code CustomPotionEffects}（{@code setCustomEffects} 只追加不覆盖）。
+     */
+    private static void writeAllEffects(ItemStack stack, List<MobEffectInstance> effects) {
         Component originalName = stack.getHoverName();
         PotionUtils.setPotion(stack, Potions.EMPTY);
-        // 清除旧的 CustomPotionEffects 防止重复追加（setCustomEffects 只追加不覆盖）
         stack.removeTagKey("CustomPotionEffects");
         PotionUtils.setCustomEffects(stack, effects);
         // 恢复原始显示名称

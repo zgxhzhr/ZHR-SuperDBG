@@ -4,5 +4,12 @@
   "superdbg.gui.duration": "Duration",
   "superdbg.gui.time": "Time",
   "superdbg.gui.permanent": "Infinite",
-  "superdbg.gui.confirm": "Confirm"
+  "superdbg.gui.confirm": "Confirm",
+  "superdbg.gui.add_effect": "Add Effect",
+  "superdbg.gui.no_effect": "(No effects yet — click Add Effect)",
+  "superdbg.gui.pick_effect": "Pick Effect",
+  "superdbg.gui.pick_effect_hint": "Pick a potion effect (click to select, Esc to go back)",
+  "superdbg.gui.search_effect": "Search effect name or id…",
+  "superdbg.gui.picker_count": "%s entries",
+  "superdbg.gui.picker_scroll": " (scroll to page)"
 }

@@ -5,38 +5,46 @@ import io.github.zgxhzhr.superdbg.potion.PotionEditorProvider;
 import io.github.zgxhzhr.superdbg.potion.PotionEditors;
 import io.github.zgxhzhr.superdbg.potion.PotionEffectData;
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.item.ItemStack;
 import net.minecraftforge.network.NetworkEvent;
+import net.minecraftforge.registries.ForgeRegistries;
 
 import java.util.function.Supplier;
 
 /**
- * 客户端→服务端：更新副手药水某个效果的等级与时长。
+ * 客户端→服务端：向副手药水追加一条新的药水效果（原有全部效果保持不变）。
  *
- * @param effectIndex 效果在列表中的索引
- * @param amplifier   新等级（0-{@link PotionEffectData#MAX_AMPLIFIER}）
- * @param duration    新时长（-1 永久，或非负 tick）
+ * @param effect    要添加的效果类型（解码时注册 id 不存在则为 null，服务端直接丢弃）
+ * @param amplifier 等级（0-{@link PotionEffectData#MAX_AMPLIFIER}）
+ * @param duration  时长（-1 永久，或非负 tick）
  */
-public record UpdatePotionEffectPacket(int effectIndex, int amplifier, int duration) {
+public record AddPotionEffectPacket(MobEffect effect, int amplifier, int duration) {
+
+    /** 效果 id 缺失时的占位符：解码后查不到对应效果，服务端据此丢弃。 */
+    private static final ResourceLocation MISSING_ID = new ResourceLocation("minecraft", "empty");
 
     /**
      * 编码到网络缓冲区。
      */
     public void encode(FriendlyByteBuf buf) {
-        buf.writeVarInt(effectIndex);
+        ResourceLocation id = effect == null ? null : ForgeRegistries.MOB_EFFECTS.getKey(effect);
+        buf.writeResourceLocation(id == null ? MISSING_ID : id);
         buf.writeVarInt(amplifier);
         buf.writeVarInt(duration);
     }
 
     /**
-     * 从网络缓冲区解码。
+     * 从网络缓冲区解码。效果 id 无效时 {@code effect} 为 null。
      */
-    public static UpdatePotionEffectPacket decode(FriendlyByteBuf buf) {
-        int index = buf.readVarInt();
+    public static AddPotionEffectPacket decode(FriendlyByteBuf buf) {
+        ResourceLocation id = buf.readResourceLocation();
+        MobEffect effect = ForgeRegistries.MOB_EFFECTS.getValue(id);
         int amp = buf.readVarInt();
         int dur = buf.readVarInt();
-        return new UpdatePotionEffectPacket(index, amp, dur);
+        return new AddPotionEffectPacket(effect, amp, dur);
     }
 
     /**
@@ -56,9 +64,13 @@ public record UpdatePotionEffectPacket(int effectIndex, int amplifier, int durat
         if (player == null) {
             return;
         }
+        if (effect == null) {
+            Constants.LOG.warn("收到未知药水效果的添加请求，已忽略");
+            return;
+        }
         // 仅创造模式可编辑
         if (!player.isCreative()) {
-            Constants.LOG.warn("非创造模式玩家 {} 尝试编辑药水，已忽略", player.getName().getString());
+            Constants.LOG.warn("非创造模式玩家 {} 尝试添加药水效果，已忽略", player.getName().getString());
             return;
         }
 
@@ -69,23 +81,23 @@ public record UpdatePotionEffectPacket(int effectIndex, int amplifier, int durat
             return;
         }
 
-        // 防御性 clamp，客户端校验不可信。amplifier 上限已放开到 Integer.MAX_VALUE
-        // （由 MobEffectInstanceMixin 放开 byte 序列化瓶颈支持）。
+        // 防御性 clamp，客户端校验不可信
         int safeAmplifier = PotionEffectData.clampAmplifier(amplifier);
         int safeDuration = PotionEffectData.clampDuration(duration);
 
         try {
-            editor.writeEffect(offhand, effectIndex, safeAmplifier, safeDuration);
+            editor.addEffect(offhand, effect, safeAmplifier, safeDuration);
             // 标记副手物品已变更，强制同步到客户端。
             // removed() 提交路径下客户端可能已关闭菜单，非 0 容器 id 的槽位同步包会被丢弃，
             // 需再经 inventoryMenu（containerId=0）同步一次作为兜底。
             player.getInventory().setChanged();
             player.containerMenu.broadcastChanges();
             player.inventoryMenu.broadcastChanges();
-            Constants.LOG.debug("玩家 {} 编辑药水效果索引 {}：amplifier={}, duration={}",
-                    player.getName().getString(), effectIndex, safeAmplifier, safeDuration);
-        } catch (IndexOutOfBoundsException | IllegalArgumentException e) {
-            Constants.LOG.warn("编辑药水效果失败：{}", e.getMessage());
+            Constants.LOG.debug("玩家 {} 添加药水效果 {}：amplifier={}, duration={}",
+                    player.getName().getString(), ForgeRegistries.MOB_EFFECTS.getKey(effect),
+                    safeAmplifier, safeDuration);
+        } catch (IllegalArgumentException e) {
+            Constants.LOG.warn("添加药水效果失败：{}", e.getMessage());
         }
     }
 }

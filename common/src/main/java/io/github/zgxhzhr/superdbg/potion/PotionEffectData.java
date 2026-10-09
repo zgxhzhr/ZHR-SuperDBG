@@ -29,6 +29,33 @@ public record PotionEffectData(
     /** 允许的最大等级：{@link Integer#MAX_VALUE} - 1（留余量防效果叠加计算溢出，由 MobEffectInstanceMixin 放开 byte 瓶颈支持）。 */
     public static final int MAX_AMPLIFIER = Integer.MAX_VALUE - 1;
 
+    /** 允许的最大持续时长（tick），避免恶意超大值。 */
+    public static final int MAX_DURATION = Integer.MAX_VALUE / 2;
+
+    /**
+     * 把等级收敛到合法区间（服务端防御性处理用：客户端校验不可信）。
+     */
+    public static int clampAmplifier(int amplifier) {
+        if (amplifier < MIN_AMPLIFIER) {
+            return MIN_AMPLIFIER;
+        }
+        return Math.min(amplifier, MAX_AMPLIFIER);
+    }
+
+    /**
+     * 把时长收敛到合法区间：{@link #INFINITE_DURATION}（永久）原样保留，
+     * 其余负数归零，超大值封顶到 {@link #MAX_DURATION}。
+     */
+    public static int clampDuration(int duration) {
+        if (duration == INFINITE_DURATION) {
+            return INFINITE_DURATION;
+        }
+        if (duration < 0) {
+            return 0;
+        }
+        return Math.min(duration, MAX_DURATION);
+    }
+
     /**
      * 校验 amplifier 与 duration 的合法性。
      *

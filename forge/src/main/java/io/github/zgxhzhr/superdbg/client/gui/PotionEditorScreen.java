@@ -1,9 +1,11 @@
 package io.github.zgxhzhr.superdbg.client.gui;
 
 import io.github.zgxhzhr.superdbg.menu.PotionEditorMenu;
+import io.github.zgxhzhr.superdbg.network.AddPotionEffectPacket;
 import io.github.zgxhzhr.superdbg.network.NetworkHandler;
 import io.github.zgxhzhr.superdbg.network.UpdatePotionEffectPacket;
 import io.github.zgxhzhr.superdbg.potion.PotionEffectData;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
@@ -27,6 +29,8 @@ public class PotionEditorScreen extends AbstractContainerScreen<PotionEditorMenu
 
     private static final int ROW_HEIGHT = 24;
     private static final int LIST_START_Y = 22;
+    /** 新增效果时的默认持续时长（tick），10 秒；等级默认为 0（1 级）。 */
+    private static final int DEFAULT_NEW_DURATION = 200;
 
     private final List<EditBox> amplifierBoxes = new ArrayList<>();
     private final List<EditBox> durationBoxes = new ArrayList<>();
@@ -44,10 +48,14 @@ public class PotionEditorScreen extends AbstractContainerScreen<PotionEditorMenu
 
     @Override
     protected void init() {
+        // 效果数量会因「添加效果」而变化，每次 init（含从效果选择器返回）都按当前数量重算面板高度
+        this.imageHeight = Math.max(110, LIST_START_Y + 14 + menu.getEffects().size() * ROW_HEIGHT + 32);
+        this.inventoryLabelY = this.imageHeight - 94;
         super.init();
         amplifierBoxes.clear();
         durationBoxes.clear();
         permanentButtons.clear();
+        lastFocusedBox = null;
 
         List<PotionEffectData> effects = menu.getEffects();
         for (int i = 0; i < effects.size(); i++) {
@@ -92,12 +100,34 @@ public class PotionEditorScreen extends AbstractContainerScreen<PotionEditorMenu
             permanentButtons.add(permBtn);
         }
 
+        // 添加效果按钮
+        addRenderableWidget(Button.builder(
+                        Component.translatable("superdbg.gui.add_effect"),
+                        b -> openEffectPicker())
+                .bounds(leftPos + 8, topPos + imageHeight - 26, 62, 20)
+                .build());
+
         // 确认按钮
         addRenderableWidget(Button.builder(
                         Component.translatable("superdbg.gui.confirm"),
                         b -> onClose())
-                .bounds(leftPos + imageWidth / 2 - 30, topPos + imageHeight - 26, 60, 20)
+                .bounds(leftPos + imageWidth - 70, topPos + imageHeight - 26, 62, 20)
                 .build());
+    }
+
+    /**
+     * 打开药水效果选择器；选中后本地追加一条并请求服务端写入。
+     * <p>
+     * 面板高度随效果数量变化，回到本界面时 {@code setScreen(this)} 会触发
+     * {@link #init()} 重新布局。
+     */
+    private void openEffectPicker() {
+        MobEffectPickerScreen.open(effect -> {
+            menu.addEffectLocal(effect, PotionEffectData.MIN_AMPLIFIER, DEFAULT_NEW_DURATION);
+            NetworkHandler.CHANNEL.sendToServer(
+                    new AddPotionEffectPacket(effect, PotionEffectData.MIN_AMPLIFIER, DEFAULT_NEW_DURATION));
+            Minecraft.getInstance().setScreen(this);
+        });
     }
 
     @Override
@@ -124,6 +154,11 @@ public class PotionEditorScreen extends AbstractContainerScreen<PotionEditorMenu
         graphics.drawString(font, title, 8, 6, 0x404040, false);
 
         List<PotionEffectData> effects = menu.getEffects();
+        if (effects.isEmpty()) {
+            graphics.drawString(font, Component.translatable("superdbg.gui.no_effect"),
+                    8, LIST_START_Y + 5, 0x707070, false);
+            return;
+        }
         for (int i = 0; i < effects.size(); i++) {
             PotionEffectData data = effects.get(i);
             int rowY = LIST_START_Y + i * ROW_HEIGHT;

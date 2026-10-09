@@ -5,6 +5,13 @@
   "superdbg.gui.time": "时",
   "superdbg.gui.permanent": "永久",
   "superdbg.gui.confirm": "确认",
+  "superdbg.gui.add_effect": "添加效果",
+  "superdbg.gui.no_effect": "（无效果，点左下角「添加效果」）",
+  "superdbg.gui.pick_effect": "选择药水效果",
+  "superdbg.gui.pick_effect_hint": "选择药水效果（点击选中，Esc 返回）",
+  "superdbg.gui.search_effect": "搜索效果名或 id…",
+  "superdbg.gui.picker_count": "共 %s 项",
+  "superdbg.gui.picker_scroll": "（滚轮翻页）",
 
   "attribute.touhou_little_maid.maid_use_item_speed": "女仆物品使用速度",
   "attribute.touhou_little_maid.maid_crossbow_attack_speed": "女仆弩射击速度",

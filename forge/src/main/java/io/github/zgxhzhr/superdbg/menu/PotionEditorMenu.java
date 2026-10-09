@@ -5,6 +5,7 @@ import io.github.zgxhzhr.superdbg.potion.PotionEffectData;
 import io.github.zgxhzhr.superdbg.potion.PotionEditorProvider;
 import io.github.zgxhzhr.superdbg.potion.PotionEditors;
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.AbstractContainerMenu;
@@ -88,6 +89,14 @@ public class PotionEditorMenu extends AbstractContainerMenu {
                 old.effect(), amplifier, duration,
                 old.ambient(), old.visible(), old.showIcon()
         ));
+    }
+
+    /**
+     * 客户端追加新效果时本地更新列表（乐观更新）。
+     * 服务端真实写回由 {@code AddPotionEffectPacket} 处理。
+     */
+    public void addEffectLocal(MobEffect effect, int amplifier, int duration) {
+        effects.add(new PotionEffectData(effect, amplifier, duration, false, true, true));
     }
 
     @Override
